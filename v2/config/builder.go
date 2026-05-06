@@ -400,6 +400,8 @@ func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 
 			CacheFile: &option.CacheFileOptions{
 				Enabled:         true,
+				StoreFakeIP:     true,
+				StoreRDRC:       true,
 				StoreWARPConfig: true,
 				Path:            "data/clash.db",
 			},
@@ -874,6 +876,140 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			DNSRuleAction: rejectDnsAction,
 		})
 	}
+
+	// China-optimized routing — always on. Sends private + apple-cn + microsoft-cn
+	// + cn (when not already covered by the Region branch) direct, blocks QUIC
+	// outbound (browsers fall back gracefully), and (off-iOS) routes non-CN
+	// A/AAAA queries through FakeIP for zero-RTT proxy resolution.
+	chinaRulesets := []option.RuleSet{
+		{
+			Tag: "china-geosite-private", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+			RemoteOptions: option.RemoteRuleSet{
+				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-private.srs",
+				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+				DownloadDetour: OutboundSelectTag,
+			},
+		},
+		{
+			Tag: "china-geoip-private", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+			RemoteOptions: option.RemoteRuleSet{
+				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-private.srs",
+				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+				DownloadDetour: OutboundSelectTag,
+			},
+		},
+		{
+			Tag: "china-geosite-apple-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+			RemoteOptions: option.RemoteRuleSet{
+				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-apple-cn.srs",
+				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+				DownloadDetour: OutboundSelectTag,
+			},
+		},
+		{
+			Tag: "china-geosite-microsoft-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+			RemoteOptions: option.RemoteRuleSet{
+				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-microsoft@cn.srs",
+				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+				DownloadDetour: OutboundSelectTag,
+			},
+		},
+	}
+	chinaDirectTags := []string{
+		"china-geosite-private",
+		"china-geoip-private",
+		"china-geosite-apple-cn",
+		"china-geosite-microsoft-cn",
+	}
+
+	// Avoid duplicating geosite-cn / geoip-cn when the existing Region branch
+	// (below) already adds them under the unprefixed tag for Region=cn.
+	if hopt.Region != "cn" {
+		chinaRulesets = append(chinaRulesets,
+			option.RuleSet{
+				Tag: "china-geosite-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+				RemoteOptions: option.RemoteRuleSet{
+					URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+					UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+					DownloadDetour: OutboundSelectTag,
+				},
+			},
+			option.RuleSet{
+				Tag: "china-geoip-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+				RemoteOptions: option.RemoteRuleSet{
+					URL:            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+					UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+					DownloadDetour: OutboundSelectTag,
+				},
+			},
+		)
+		chinaDirectTags = append(chinaDirectTags, "china-geosite-cn", "china-geoip-cn")
+	}
+
+	rulesets = append(rulesets, chinaRulesets...)
+
+	// DNS: send these domains direct (no FakeIP, no proxy DNS leak).
+	dnsRules = append(dnsRules, option.DefaultDNSRule{
+		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectTags},
+		DNSRuleAction: option.DNSRuleAction{
+			Action: C.RuleActionTypeRoute,
+			RouteOptions: option.DNSRouteActionOptions{
+				Server:         DNSMultiDirectTag,
+				Strategy:       hopt.DirectDnsDomainStrategy,
+				RewriteTTL:     &DEFAULT_DNS_TTL,
+				BypassIfFailed: false,
+			},
+		},
+	})
+	// Route: same destinations bypass the proxy.
+	routeRules = append(routeRules, option.Rule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultRule{
+			RawDefaultRule: option.RawDefaultRule{RuleSet: chinaDirectTags},
+			RuleAction: option.RuleAction{
+				Action:       C.RuleActionTypeRoute,
+				RouteOptions: option.RouteActionOptions{Outbound: OutboundDirectTag},
+			},
+		},
+	})
+
+	// FakeIP for non-CN A/AAAA — skip on iOS to keep the NetworkExtension
+	// process under its ~50 MB memory cap (geosite-geolocation-!cn is the
+	// largest commonly-used rule set, ~4-8 MB compiled).
+	if hopt.EnableFakeDNS && !C.IsIos {
+		rulesets = append(rulesets, option.RuleSet{
+			Tag: "china-geosite-geolocation-not-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
+			RemoteOptions: option.RemoteRuleSet{
+				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs",
+				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
+				DownloadDetour: OutboundSelectTag,
+			},
+		})
+		dnsRules = append(dnsRules, option.DefaultDNSRule{
+			RawDefaultDNSRule: option.RawDefaultDNSRule{
+				RuleSet: []string{"china-geosite-geolocation-not-cn"},
+				QueryType: badoption.Listable[option.DNSQueryType]{
+					option.DNSQueryType(mDNS.StringToType["A"]),
+					option.DNSQueryType(mDNS.StringToType["AAAA"]),
+				},
+			},
+			DNSRuleAction: option.DNSRuleAction{
+				Action: C.RuleActionTypeRoute,
+				RouteOptions: option.DNSRouteActionOptions{
+					Server:         DNSFakeTag,
+					Strategy:       hopt.RemoteDnsDomainStrategy,
+					RewriteTTL:     &DEFAULT_DNS_TTL,
+					DisableCache:   true,
+					BypassIfFailed: false,
+				},
+			},
+		})
+	}
+
+	// Always block QUIC (UDP/443) — overrides the user-toggled BlockQuic.
+	// Browsers fall back to TCP+TLS; CN-direct sites rarely use QUIC.
+	hopt.RouteOptions.BlockQuic = true
+
 	if hopt.Region != "other" {
 		dnsRules = append(dnsRules, option.DefaultDNSRule{
 			RawDefaultDNSRule: option.RawDefaultDNSRule{
