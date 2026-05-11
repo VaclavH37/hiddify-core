@@ -19,7 +19,6 @@ type HiddifyOptions struct {
 	ClashApiSecret          string `json:"web-secret,omitempty"`
 	Region                  string `json:"region,omitempty"`
 	BlockAds                bool   `json:"block-ads,omitempty" overridable:"true"`
-	UseXrayCoreWhenPossible bool   `json:"use-xray-core-when-possible,omitempty" overridable:"true"`
 	BalancerStrategy        string `json:"balancer-strategy,omitempty" overridable:"true"`
 	// GeoIPPath        string      `json:"geoip-path"`
 	// GeoSitePath      string      `json:"geosite-path"`
@@ -164,7 +163,6 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 			EnablePadding:  false,
 			PaddingSize:    "1200-1500",
 		},
-		UseXrayCoreWhenPossible: false,
 	}
 }
 

@@ -257,7 +257,6 @@ require (
 )
 
 require (
-	github.com/hiddify/ray2sing v0.0.0-20260209214534-63c82f8c23a6
 	github.com/sagernet/sing-box v1.13.0
 	github.com/xmdhs/clash2singbox v0.1.4
 	gopkg.in/yaml.v3 v3.0.1
@@ -265,15 +264,11 @@ require (
 
 // replace github.com/sagernet/sing-box => github.com/hiddify/hiddify-sing-box v1.13.0-rc.2.0.20260209222802-dd10a2129de7
 
-// replace github.com/xtls/xray-core => github.com/hiddify/xray-core v0.0.0-20260124181826-59e6569c13e9
-
 replace github.com/bepass-org/warp-plus => github.com/hiddify/warp-plus v0.0.0-20240717223357-4f3122e0d11d
 
 replace github.com/sagernet/sing-dns => github.com/shtorm-7/sing-dns v0.4.6-extended-1.0.0
 
 replace github.com/ameshkov/dnscrypt/v2 => github.com/shtorm-7/dnscrypt/v2 v2.4.0-extended-1.0.0
-
-replace github.com/hiddify/ray2sing => ./ray2sing
 
 replace github.com/sagernet/sing-box => ./hiddify-sing-box
 

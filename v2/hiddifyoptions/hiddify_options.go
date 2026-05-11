@@ -58,7 +58,6 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 			EnablePadding:  false,
 			PaddingSize:    &IntRange{From: 1200, To: 1500},
 		},
-		UseXrayCoreWhenPossible: false,
 	}
 }
 

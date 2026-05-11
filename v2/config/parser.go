@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hiddify/ray2sing/ray2sing"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/batch"
@@ -87,11 +86,6 @@ func parseConfigContent(ctx context.Context, content []byte, debug bool, configO
 		return patchConfigStr(ctx, newContent, "SingboxParser", configOpt)
 	}
 
-	v2ray, err := ray2sing.Ray2SingboxOptions(ctx, string(content), configOpt.UseXrayCoreWhenPossible)
-
-	if err == nil {
-		return patchConfigOptions(ctx, v2ray, "V2rayParser", configOpt)
-	}
 	fmt.Printf("Convert using clash\n")
 	clashObj := clash.Clash{}
 	if err := yaml.Unmarshal(content, &clashObj); err == nil && clashObj.Proxies != nil {
