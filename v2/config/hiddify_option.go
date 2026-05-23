@@ -141,7 +141,7 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 		LogLevel: "warn",
 		// LogFile:        "/dev/null",
 		LogFile:        "data/box.log",
-		Region:         "other",
+		Region:         "cn",
 		EnableClashApi: true,
 
 		ClashApiPort:   16756,

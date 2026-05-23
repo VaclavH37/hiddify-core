@@ -69,6 +69,14 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	if err != nil {
 		return err
 	}
+	// CN-reachable DoH for the China-direct rule-set. Resolves doh.pub via the
+	// static-IP server (seeded in builder.go) and dials direct without TLS
+	// fragmentation — the endpoint is inside the GFW and fragmentation is both
+	// unnecessary and a likely CDN-edge irritant here.
+	cn_direct_dns, err := getDNSServerOptions(DNSCNDirectTag, "https://doh.pub/dns-query", DNSStaticTag, OutboundDirectTag)
+	if err != nil {
+		return err
+	}
 	trick_dns, err := getDNSServerOptions(DNSTricksDirectTag, "https://dns.cloudflare.com/dns-query#fragment=300", DNSDirectTag, OutboundDirectFragmentTag)
 	if err != nil {
 		return err
@@ -110,6 +118,7 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 				*remote_dns_fallback,
 				*trick_dns,
 				*direct_dns,
+				*cn_direct_dns,
 				*local_dns,
 				*remote_no_warp_dns,
 				// *multi_dns_direct,

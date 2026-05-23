@@ -27,6 +27,7 @@ const (
 	DNSLocalTag          = "dns-local"
 	DNSStaticTag         = "dns-static"
 	DNSDirectTag         = "dns-direct"
+	DNSCNDirectTag       = "dns-cn-direct"
 	DNSRemoteNoWarpTag   = "dns-remote-no-warp"
 	// DNSBlockTag        = "dns-block"
 	DNSFakeTag         = "dns-fake"
@@ -80,6 +81,9 @@ func BuildConfig(ctx context.Context, hopts *HiddifyOptions, inputOpt *ReadOptio
 	setLog(&options, hopts)
 	setInbound(&options, hopts)
 	staticIPs := make(map[string][]string)
+	// Bootstrap IPs for doh.pub (Tencent DNSPod) so the CN-direct DoH server in
+	// setDns() has a known-good resolution path without depending on UDP/53.
+	staticIPs["doh.pub"] = []string{"1.12.12.12", "120.53.53.53"}
 	// staticIPs["api.cloudflareclient.com"] = []string{"104.16.192.82", "2606:4700::6810:1854", getRandomWarpIP()}
 	// setNTP(&options)
 	if err := setOutbounds(&options, input, hopts, &staticIPs); err != nil {
@@ -948,16 +952,20 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 
 	rulesets = append(rulesets, chinaRulesets...)
 
-	// DNS: send these domains direct (no FakeIP, no proxy DNS leak).
+	// DNS: send these domains direct via a CN-reachable DoH endpoint. The
+	// default DirectDnsAddress (1.1.1.1) is GFW-poisoned, so apple-cn /
+	// microsoft-cn / geosite-cn lookups need a resolver that actually answers
+	// inside CN. BypassIfFailed lets the lookup fall through to a remote DNS
+	// rule if the DoH server is unreachable.
 	dnsRules = append(dnsRules, option.DefaultDNSRule{
 		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectTags},
 		DNSRuleAction: option.DNSRuleAction{
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
-				Server:         DNSMultiDirectTag,
+				Server:         DNSCNDirectTag,
 				Strategy:       hopt.DirectDnsDomainStrategy,
 				RewriteTTL:     &DEFAULT_DNS_TTL,
-				BypassIfFailed: false,
+				BypassIfFailed: true,
 			},
 		},
 	})
@@ -1011,6 +1019,11 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	hopt.RouteOptions.BlockQuic = true
 
 	if hopt.Region != "other" {
+		// Same poisoning rationale as the China-direct block above: route the
+		// Region-branch DNS lookups through the CN-reachable DoH server so the
+		// .cn / geosite-<region> direct rules actually resolve correctly inside
+		// the GFW. BypassIfFailed lets these fall through to remote DNS if the
+		// CN DoH endpoint is unreachable.
 		dnsRules = append(dnsRules, option.DefaultDNSRule{
 			RawDefaultDNSRule: option.RawDefaultDNSRule{
 				DomainSuffix: []string{"." + hopt.Region},
@@ -1018,10 +1031,10 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			DNSRuleAction: option.DNSRuleAction{
 				Action: C.RuleActionTypeRoute,
 				RouteOptions: option.DNSRouteActionOptions{
-					Server:         DNSMultiDirectTag,
+					Server:         DNSCNDirectTag,
 					Strategy:       hopt.DirectDnsDomainStrategy,
 					RewriteTTL:     &DEFAULT_DNS_TTL,
-					BypassIfFailed: false,
+					BypassIfFailed: true,
 				},
 			},
 		})
@@ -1050,10 +1063,10 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			DNSRuleAction: option.DNSRuleAction{
 				Action: C.RuleActionTypeRoute,
 				RouteOptions: option.DNSRouteActionOptions{
-					Server:         DNSMultiDirectTag,
+					Server:         DNSCNDirectTag,
 					Strategy:       hopt.DirectDnsDomainStrategy,
 					RewriteTTL:     &DEFAULT_DNS_TTL,
-					BypassIfFailed: false,
+					BypassIfFailed: true,
 				},
 			},
 		})
