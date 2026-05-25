@@ -892,27 +892,27 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// rule-set branch) have been dropped.
 	chinaRulesets := []option.RuleSet{
 		{
-			Tag: "china-geosite-private", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
-			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-private.srs"},
+			Tag: "direct-private", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/direct-private.srs"},
 		},
 		{
-			Tag: "china-geosite-apple-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
-			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-apple-cn.srs"},
+			Tag: "direct-apple", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/direct-apple.srs"},
 		},
 		{
-			Tag: "china-geosite-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
-			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-cn.srs"},
+			Tag: "direct-regional-sites", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/direct-regional-sites.srs"},
 		},
 		{
-			Tag: "china-geoip-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
-			LocalOptions: option.LocalRuleSet{Path: "rulesets/geoip-cn.srs"},
+			Tag: "direct-regional-ips", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/direct-regional-ips.srs"},
 		},
 	}
 	chinaDirectTags := []string{
-		"china-geosite-private",
-		"china-geosite-apple-cn",
-		"china-geosite-cn",
-		"china-geoip-cn",
+		"direct-private",
+		"direct-apple",
+		"direct-regional-sites",
+		"direct-regional-ips",
 	}
 
 	rulesets = append(rulesets, chinaRulesets...)
@@ -951,12 +951,12 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// largest commonly-used rule set, ~4-8 MB compiled).
 	if hopt.EnableFakeDNS && !C.IsIos {
 		rulesets = append(rulesets, option.RuleSet{
-			Tag: "china-geosite-geolocation-not-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
-			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-geolocation-not-cn.srs"},
+			Tag: "fakeip-remote-sites", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/fakeip-remote-sites.srs"},
 		})
 		dnsRules = append(dnsRules, option.DefaultDNSRule{
 			RawDefaultDNSRule: option.RawDefaultDNSRule{
-				RuleSet: []string{"china-geosite-geolocation-not-cn"},
+				RuleSet: []string{"fakeip-remote-sites"},
 				QueryType: badoption.Listable[option.DNSQueryType]{
 					option.DNSQueryType(mDNS.StringToType["A"]),
 					option.DNSQueryType(mDNS.StringToType["AAAA"]),
