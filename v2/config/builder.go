@@ -881,73 +881,38 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		})
 	}
 
-	// China-optimized routing — always on. Sends private + apple-cn + microsoft-cn
-	// + cn (when not already covered by the Region branch) direct, blocks QUIC
-	// outbound (browsers fall back gracefully), and (off-iOS) routes non-CN
-	// A/AAAA queries through FakeIP for zero-RTT proxy resolution.
+	// China-optimized routing — always on. Sends private + apple-cn + cn direct,
+	// blocks QUIC outbound (browsers fall back gracefully), and (off-iOS)
+	// routes non-CN A/AAAA queries through FakeIP for zero-RTT proxy
+	// resolution. Rule-sets are bundled into the AAB and extracted onto the
+	// Go core's BasePath by lib/core/rulesets/ruleset_extractor.dart — see
+	// RULESETS.md for the refresh workflow. Two upstream entries that the
+	// previous remote-fetch config silently 404'd on (sing-geoip/geoip-private
+	// and sing-geosite/geosite-microsoft@cn — neither exists on SagerNet's
+	// rule-set branch) have been dropped.
 	chinaRulesets := []option.RuleSet{
 		{
-			Tag: "china-geosite-private", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-private.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
+			Tag: "china-geosite-private", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-private.srs"},
 		},
 		{
-			Tag: "china-geoip-private", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-private.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
+			Tag: "china-geosite-apple-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-apple-cn.srs"},
 		},
 		{
-			Tag: "china-geosite-apple-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-apple-cn.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
+			Tag: "china-geosite-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-cn.srs"},
 		},
 		{
-			Tag: "china-geosite-microsoft-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-microsoft@cn.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
+			Tag: "china-geoip-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/geoip-cn.srs"},
 		},
 	}
 	chinaDirectTags := []string{
 		"china-geosite-private",
-		"china-geoip-private",
 		"china-geosite-apple-cn",
-		"china-geosite-microsoft-cn",
-	}
-
-	// Avoid duplicating geosite-cn / geoip-cn when the existing Region branch
-	// (below) already adds them under the unprefixed tag for Region=cn.
-	if hopt.Region != "cn" {
-		chinaRulesets = append(chinaRulesets,
-			option.RuleSet{
-				Tag: "china-geosite-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-				RemoteOptions: option.RemoteRuleSet{
-					URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-					UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-					DownloadDetour: OutboundSelectTag,
-				},
-			},
-			option.RuleSet{
-				Tag: "china-geoip-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-				RemoteOptions: option.RemoteRuleSet{
-					URL:            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-					UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-					DownloadDetour: OutboundSelectTag,
-				},
-			},
-		)
-		chinaDirectTags = append(chinaDirectTags, "china-geosite-cn", "china-geoip-cn")
+		"china-geosite-cn",
+		"china-geoip-cn",
 	}
 
 	rulesets = append(rulesets, chinaRulesets...)
@@ -986,12 +951,8 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// largest commonly-used rule set, ~4-8 MB compiled).
 	if hopt.EnableFakeDNS && !C.IsIos {
 		rulesets = append(rulesets, option.RuleSet{
-			Tag: "china-geosite-geolocation-not-cn", Type: C.RuleSetTypeRemote, Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
+			Tag: "china-geosite-geolocation-not-cn", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+			LocalOptions: option.LocalRuleSet{Path: "rulesets/geosite-geolocation-not-cn.srs"},
 		})
 		dnsRules = append(dnsRules, option.DefaultDNSRule{
 			RawDefaultDNSRule: option.RawDefaultDNSRule{
@@ -1019,11 +980,12 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	hopt.RouteOptions.BlockQuic = true
 
 	if hopt.Region != "other" {
-		// Same poisoning rationale as the China-direct block above: route the
-		// Region-branch DNS lookups through the CN-reachable DoH server so the
-		// .cn / geosite-<region> direct rules actually resolve correctly inside
-		// the GFW. BypassIfFailed lets these fall through to remote DNS if the
-		// CN DoH endpoint is unreachable.
+		// Catch-all for any .<region> domain not covered by the rule-sets
+		// above. DNS lookup goes via the CN-reachable DoH server (same
+		// poisoning rationale as the China-direct block above); routing dials
+		// direct. Rule-set–keyed lookups for geosite-cn / geoip-cn are already
+		// handled by the chinaRulesets block, which now ships those rule-sets
+		// as bundled local data.
 		dnsRules = append(dnsRules, option.DefaultDNSRule{
 			RawDefaultDNSRule: option.RawDefaultDNSRule{
 				DomainSuffix: []string{"." + hopt.Region},
@@ -1043,63 +1005,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			DefaultOptions: option.DefaultRule{
 				RawDefaultRule: option.RawDefaultRule{
 					DomainSuffix: []string{"." + hopt.Region},
-				},
-				RuleAction: option.RuleAction{
-					Action: C.RuleActionTypeRoute,
-					RouteOptions: option.RouteActionOptions{
-						Outbound: OutboundDirectTag,
-					},
-				},
-			},
-		})
-
-		dnsRules = append(dnsRules, option.DefaultDNSRule{
-			RawDefaultDNSRule: option.RawDefaultDNSRule{
-
-				RuleSet: []string{
-					"geosite-" + hopt.Region,
-				},
-			},
-			DNSRuleAction: option.DNSRuleAction{
-				Action: C.RuleActionTypeRoute,
-				RouteOptions: option.DNSRouteActionOptions{
-					Server:         DNSCNDirectTag,
-					Strategy:       hopt.DirectDnsDomainStrategy,
-					RewriteTTL:     &DEFAULT_DNS_TTL,
-					BypassIfFailed: true,
-				},
-			},
-		})
-
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geoip-" + hopt.Region,
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/country/geoip-" + hopt.Region + ".srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
-		})
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geosite-" + hopt.Region,
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/country/geosite-" + hopt.Region + ".srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
-			},
-		})
-
-		routeRules = append(routeRules, option.Rule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultRule{
-				RawDefaultRule: option.RawDefaultRule{
-					RuleSet: []string{
-						"geoip-" + hopt.Region,
-						"geosite-" + hopt.Region,
-					},
 				},
 				RuleAction: option.RuleAction{
 					Action: C.RuleActionTypeRoute,
@@ -1130,8 +1035,11 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
 		AutoDetectInterface: (!C.IsAndroid && !C.IsIos) && (hopt.EnableTun || hopt.EnableTunService),
+		// Fallback resolver for hostnames not matched by a DNS rule (e.g. proxy
+		// outbound server hostnames). Use the CN-reachable DoH server so a node
+		// addressed by hostname resolves correctly inside the GFW.
 		DefaultDomainResolver: &option.DomainResolveOptions{
-			Server:   DNSMultiDirectTag,
+			Server:   DNSCNDirectTag,
 			Strategy: hopt.DirectDnsDomainStrategy,
 		},
 		// OverrideAndroidVPN: hopt.EnableTun && C.IsAndroid,

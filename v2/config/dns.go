@@ -60,10 +60,12 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 		return err
 	}
 
-	direct_detour := OutboundDirectFragmentTag
-	if strings.HasPrefix(opt.DirectDnsAddress, "udp://") || !strings.Contains(opt.DirectDnsAddress, "://") {
-		direct_detour = ""
-	}
+	// Direct DNS dials direct (no TLS fragmentation). The fragmented outbound
+	// was useful upstream for DPI evasion against the user's local ISP, but
+	// this build only targets CN networks: the direct DNS endpoint is an
+	// in-CN DoH server (alidns/doh.pub) where fragmentation adds latency and
+	// risks CDN-edge confusion without any evasion benefit.
+	direct_detour := OutboundDirectTag
 
 	direct_dns, err := getDNSServerOptions(DNSDirectTag, opt.DirectDnsAddress, DNSLocalTag, direct_detour)
 	if err != nil {
@@ -267,6 +269,9 @@ func addForceDirect(options *option.Options, hopt *HiddifyOptions) ([]option.Def
 		domains = append(domains, domain)
 	}
 	if len(domains) > 0 {
+		// Connection-test URLs + cloudflareclient bootstrap. Resolve via the
+		// CN-reachable DoH so URLTest probes don't trip over poisoned 1.1.1.1
+		// answers for cp.cloudflare.com / google.com / etc. inside the GFW.
 		forceDirectRules = append(forceDirectRules,
 			option.DefaultDNSRule{
 				RawDefaultDNSRule: option.RawDefaultDNSRule{
@@ -275,10 +280,10 @@ func addForceDirect(options *option.Options, hopt *HiddifyOptions) ([]option.Def
 				DNSRuleAction: option.DNSRuleAction{
 					Action: C.RuleActionTypeRoute,
 					RouteOptions: option.DNSRouteActionOptions{
-						Server:         DNSMultiDirectTag,
+						Server:         DNSCNDirectTag,
 						Strategy:       hopt.DirectDnsDomainStrategy,
 						RewriteTTL:     &DEFAULT_DNS_TTL,
-						BypassIfFailed: false,
+						BypassIfFailed: true,
 					},
 				},
 			},

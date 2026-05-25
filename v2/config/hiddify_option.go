@@ -110,7 +110,12 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 		DNSOptions: DNSOptions{
 			RemoteDnsAddress:        "1.1.1.1",
 			RemoteDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyAsIS),
-			DirectDnsAddress:        "1.1.1.1",
+			// Direct DNS defaults to a CN-reachable DoH endpoint (Alibaba). The
+			// Flutter side normally overrides this with the same value; the
+			// fallback exists for any consumer of the Go core that doesn't
+			// populate this field. 1.1.1.1 was the upstream default but is
+			// GFW-poisoned, making it unsafe as a silent fallback.
+			DirectDnsAddress:        "https://dns.alidns.com/dns-query",
 			DirectDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyAsIS),
 			IndependentDNSCache:     false,
 			EnableFakeDNS:           false,
