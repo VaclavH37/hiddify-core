@@ -975,10 +975,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		})
 	}
 
-	// Always block QUIC (UDP/443) — overrides the user-toggled BlockQuic.
-	// Browsers fall back to TCP+TLS; CN-direct sites rarely use QUIC.
-	hopt.RouteOptions.BlockQuic = true
-
 	if hopt.Region != "other" {
 		// Catch-all for any .<region> domain not covered by the rule-sets
 		// above. DNS lookup goes via the CN-reachable DoH server (same
@@ -1015,22 +1011,24 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		})
 	}
-	if hopt.RouteOptions.BlockQuic {
-		routeRules = append(routeRules, option.Rule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultRule{
-				RawDefaultRule: option.RawDefaultRule{
-					Protocol: []string{C.ProtocolQUIC},
-				},
-				RuleAction: option.RuleAction{
-					Action: C.RuleActionTypeReject,
-					RejectOptions: option.RejectActionOptions{
-						Method: C.RuleActionRejectMethodDefault,
-					},
+	// Always reject QUIC (UDP/443). All nodes are REALITY-VISION-XTLS, which is
+	// TCP-only — QUIC is never carried over the tunnel, so blocking it costs
+	// nothing and avoids pointless UDP/443 processing. Not user-configurable;
+	// the vestigial RouteOptions.BlockQuic option field is no longer consulted.
+	routeRules = append(routeRules, option.Rule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultRule{
+			RawDefaultRule: option.RawDefaultRule{
+				Protocol: []string{C.ProtocolQUIC},
+			},
+			RuleAction: option.RuleAction{
+				Action: C.RuleActionTypeReject,
+				RejectOptions: option.RejectActionOptions{
+					Method: C.RuleActionRejectMethodDefault,
 				},
 			},
-		})
-	}
+		},
+	})
 	options.Route = &option.RouteOptions{
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
