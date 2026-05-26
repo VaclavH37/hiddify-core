@@ -22,13 +22,14 @@ import (
 )
 
 const (
-	DNSRemoteTag         = "dns-remote"
-	DNSRemoteTagFallback = "dns-remote-fallback"
-	DNSLocalTag          = "dns-local"
-	DNSStaticTag         = "dns-static"
-	DNSDirectTag         = "dns-direct"
-	DNSCNDirectTag       = "dns-cn-direct"
-	DNSRemoteNoWarpTag   = "dns-remote-no-warp"
+	DNSRemoteTag           = "dns-remote"
+	DNSRemoteTagFallback   = "dns-remote-fallback"
+	DNSLocalTag            = "dns-local"
+	DNSStaticTag           = "dns-static"
+	DNSDirectTag           = "dns-direct"
+	DNSCNDirectTag         = "dns-cn-direct"
+	DNSCNDirectTagFallback = "dns-cn-direct-fallback"
+	DNSRemoteNoWarpTag     = "dns-remote-no-warp"
 	// DNSBlockTag        = "dns-block"
 	DNSFakeTag         = "dns-fake"
 	DNSTricksDirectTag = "dns-trick-direct"
@@ -81,9 +82,13 @@ func BuildConfig(ctx context.Context, hopts *HiddifyOptions, inputOpt *ReadOptio
 	setLog(&options, hopts)
 	setInbound(&options, hopts)
 	staticIPs := make(map[string][]string)
-	// Bootstrap IPs for doh.pub (Tencent DNSPod) so the CN-direct DoH server in
-	// setDns() has a known-good resolution path without depending on UDP/53.
+	// Bootstrap IPs for the CN-direct DoH servers in setDns() so they have a
+	// known-good resolution path without depending on UDP/53. doh.pub is the
+	// primary (Tencent DNSPod); dns.alidns.com is the fallback (Alibaba) used
+	// when doh.pub fails, so the China-direct optimization survives a single
+	// provider outage instead of silently degrading to the proxy resolver.
 	staticIPs["doh.pub"] = []string{"1.12.12.12", "120.53.53.53"}
+	staticIPs["dns.alidns.com"] = []string{"223.5.5.5", "223.6.6.6"}
 	// staticIPs["api.cloudflareclient.com"] = []string{"104.16.192.82", "2606:4700::6810:1854", getRandomWarpIP()}
 	// setNTP(&options)
 	if err := setOutbounds(&options, input, hopts, &staticIPs); err != nil {
@@ -920,14 +925,29 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// DNS: send these domains direct via a CN-reachable DoH endpoint. The
 	// default DirectDnsAddress (1.1.1.1) is GFW-poisoned, so apple-cn /
 	// microsoft-cn / geosite-cn lookups need a resolver that actually answers
-	// inside CN. BypassIfFailed lets the lookup fall through to a remote DNS
-	// rule if the DoH server is unreachable.
+	// inside CN. Two rules form a primary→fallback chain: BypassIfFailed lets a
+	// failed lookup fall through to the next rule, so doh.pub (Tencent) is tried
+	// first, then dns.alidns.com (Alibaba), and only if both fail does the query
+	// reach a remote (proxy) DNS rule. This keeps the optimization alive through
+	// a single-provider outage instead of silently degrading to the proxy.
 	dnsRules = append(dnsRules, option.DefaultDNSRule{
 		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectTags},
 		DNSRuleAction: option.DNSRuleAction{
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
 				Server:         DNSCNDirectTag,
+				Strategy:       hopt.DirectDnsDomainStrategy,
+				RewriteTTL:     &DEFAULT_DNS_TTL,
+				BypassIfFailed: true,
+			},
+		},
+	})
+	dnsRules = append(dnsRules, option.DefaultDNSRule{
+		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectTags},
+		DNSRuleAction: option.DNSRuleAction{
+			Action: C.RuleActionTypeRoute,
+			RouteOptions: option.DNSRouteActionOptions{
+				Server:         DNSCNDirectTagFallback,
 				Strategy:       hopt.DirectDnsDomainStrategy,
 				RewriteTTL:     &DEFAULT_DNS_TTL,
 				BypassIfFailed: true,
@@ -996,6 +1016,22 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 				},
 			},
 		})
+		// Fallback to Alibaba DoH if doh.pub fails (same primary→fallback chain
+		// as the chinaDirectTags rules above).
+		dnsRules = append(dnsRules, option.DefaultDNSRule{
+			RawDefaultDNSRule: option.RawDefaultDNSRule{
+				DomainSuffix: []string{"." + hopt.Region},
+			},
+			DNSRuleAction: option.DNSRuleAction{
+				Action: C.RuleActionTypeRoute,
+				RouteOptions: option.DNSRouteActionOptions{
+					Server:         DNSCNDirectTagFallback,
+					Strategy:       hopt.DirectDnsDomainStrategy,
+					RewriteTTL:     &DEFAULT_DNS_TTL,
+					BypassIfFailed: true,
+				},
+			},
+		})
 		routeRules = append(routeRules, option.Rule{
 			Type: C.RuleTypeDefault,
 			DefaultOptions: option.DefaultRule{
@@ -1033,9 +1069,27 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
 		AutoDetectInterface: (!C.IsAndroid && !C.IsIos) && (hopt.EnableTun || hopt.EnableTunService),
-		// Fallback resolver for hostnames not matched by a DNS rule (e.g. proxy
-		// outbound server hostnames). Use the CN-reachable DoH server so a node
-		// addressed by hostname resolves correctly inside the GFW.
+		// Catch-all resolver for hostnames not matched by any DNS rule. Our proxy
+		// nodes are REALITY-VISION and addressed by raw IP (the cover domain
+		// lives in SNI, not in the `server` field), so this resolver is NOT on
+		// the tunnel bring-up path — dialing an IP needs no resolution. It only
+		// catches stray hostnames, which for an all-IP node set is effectively
+		// nothing during bring-up.
+		//
+		// It points at the CN-reachable DoH server (doh.pub), which is
+		// static-IP bootstrapped (resolves without UDP/53) and returns real,
+		// non-poisoned answers for foreign domains inside the GFW. This is a
+		// single server on purpose: option.DomainResolveOptions has only one
+		// `Server` field and no BypassIfFailed, and it bypasses the DNS-rule
+		// engine — so the doh.pub→alidns fallback chain used by the CN-direct
+		// DNS *rules* cannot be expressed here, and no automatic fallback is
+		// possible. That is acceptable precisely because this path is off the
+		// critical bring-up route.
+		//
+		// DO NOT switch this to `local`/system DNS: the CN ISP resolver poisons
+		// foreign domains, which would corrupt any stray foreign-hostname lookup
+		// this catch-all handles. If nodes ever move to FQDN addressing, revisit
+		// (the only real lever would be pre-seeding node IPs into staticIPs).
 		DefaultDomainResolver: &option.DomainResolveOptions{
 			Server:   DNSCNDirectTag,
 			Strategy: hopt.DirectDnsDomainStrategy,

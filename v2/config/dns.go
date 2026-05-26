@@ -79,6 +79,15 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	if err != nil {
 		return err
 	}
+	// Independent CN-reachable fallback (Alibaba) for the China-direct path.
+	// Queried only when doh.pub fails (the CN-direct DNS rules chain
+	// primary→fallback via BypassIfFailed), so a single-provider outage no
+	// longer silently degrades CN routing to the proxy resolver. Bootstrapped
+	// via the same static-IP server; dials direct without fragmentation.
+	cn_direct_dns_fallback, err := getDNSServerOptions(DNSCNDirectTagFallback, "https://dns.alidns.com/dns-query", DNSStaticTag, OutboundDirectTag)
+	if err != nil {
+		return err
+	}
 	trick_dns, err := getDNSServerOptions(DNSTricksDirectTag, "https://dns.cloudflare.com/dns-query#fragment=300", DNSDirectTag, OutboundDirectFragmentTag)
 	if err != nil {
 		return err
@@ -121,6 +130,7 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 				*trick_dns,
 				*direct_dns,
 				*cn_direct_dns,
+				*cn_direct_dns_fallback,
 				*local_dns,
 				*remote_no_warp_dns,
 				// *multi_dns_direct,

@@ -163,7 +163,6 @@ require (
 	github.com/sergeyfrolov/bsbuffer v0.0.0-20180903213811-94e85abb8507 // indirect
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635 // indirect
 	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
@@ -258,6 +257,7 @@ require (
 
 require (
 	github.com/sagernet/sing-box v1.13.0
+	github.com/stretchr/testify v1.11.1
 	github.com/xmdhs/clash2singbox v0.1.4
 	gopkg.in/yaml.v3 v3.0.1
 )
