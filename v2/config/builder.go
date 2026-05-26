@@ -919,6 +919,17 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		"direct-regional-sites",
 		"direct-regional-ips",
 	}
+	// DNS rules must match by DOMAIN only. Including the geoip set
+	// (direct-regional-ips) in a DNS rule makes sing-box optimistically route
+	// every query to the CN-direct resolver to fetch an IP to test against
+	// geoip-cn, leaking every foreign domain to doh.pub/AliDNS before it falls
+	// through to FakeIP. geoip-cn stays in the route rule only (it matches the
+	// real destination IP of a connection — no DNS query involved).
+	chinaDirectDNSTags := []string{
+		"direct-private",
+		"direct-apple",
+		"direct-regional-sites",
+	}
 
 	rulesets = append(rulesets, chinaRulesets...)
 
@@ -931,7 +942,7 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// reach a remote (proxy) DNS rule. This keeps the optimization alive through
 	// a single-provider outage instead of silently degrading to the proxy.
 	dnsRules = append(dnsRules, option.DefaultDNSRule{
-		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectTags},
+		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectDNSTags},
 		DNSRuleAction: option.DNSRuleAction{
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
@@ -943,7 +954,7 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		},
 	})
 	dnsRules = append(dnsRules, option.DefaultDNSRule{
-		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectTags},
+		RawDefaultDNSRule: option.RawDefaultDNSRule{RuleSet: chinaDirectDNSTags},
 		DNSRuleAction: option.DNSRuleAction{
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
