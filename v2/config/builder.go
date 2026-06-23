@@ -325,7 +325,12 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		} else {
 			outbounds = append([]option.Outbound{balancer, urlTest}, outbounds...)
 			selectorTags = append([]string{urlTest.Tag, balancer.Tag}, selectorTags...)
-			defaultSelect = balancer.Tag
+			// Default the selector to the lowest-latency group rather than the
+			// round-robin balancer: a stable, fastest exit gives the best
+			// first-connection experience and avoids mid-session IP rotation.
+			// Auto-Rotate (balancer.Tag) stays in selectorTags, so users can
+			// still opt into it.
+			defaultSelect = urlTest.Tag
 
 		}
 	}
