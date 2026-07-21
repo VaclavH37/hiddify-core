@@ -62,6 +62,10 @@ type URLTestOptions struct {
 	ConnectionTestUrl  string            `json:"connection-test-url,omitempty" overridable:"true"`
 	ConnectionTestUrls []string          `json:"connection-test-urls,omitempty" overridable:"true"`
 	URLTestInterval    DurationInSeconds `json:"url-test-interval,omitempty" overridable:"true"`
+	// URLTestTolerance is the lowest-delay balancer's hysteresis band in milliseconds: it
+	// keeps the current exit unless a candidate is more than this much faster. Overridable
+	// from the subscription so the topology can be tuned without a client rebuild.
+	URLTestTolerance uint16 `json:"url-test-tolerance,omitempty" overridable:"true"`
 	// URLTestIdleTimeout DurationInSeconds `json:"url-test-idle-timeout"`
 }
 
@@ -135,6 +139,7 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 		URLTestOptions: URLTestOptions{
 			ConnectionTestUrl: "http://cp.cloudflare.com/",
 			URLTestInterval:   DurationInSeconds(600),
+			URLTestTolerance:  100,
 			// URLTestIdleTimeout: DurationInSeconds(6000),
 		},
 		RouteOptions: RouteOptions{

@@ -69,6 +69,14 @@ webui:
 	mv Yacd-meta-gh-pages bin/webui
 
 .PHONY: build
+# Rayn rebrand (Windows de-Hiddify): the bundled desktop core ships as
+# rayn-core.dll (matching the Android rayn-core lib) and RaynVPNCli.exe. Scoped
+# to this target only via target-specific vars so the shared iOS/macOS/Linux
+# outputs keep the global $(LIBNAME)/$(CLINAME). The CLI links + dlopen-resolves
+# the DLL by $(LIBNAME).dll, and the Dart FFI loader / CMake install use the same
+# rayn-core.dll name — keep all three in sync if this ever changes.
+windows-amd64: LIBNAME := rayn-core
+windows-amd64: CLINAME := RaynVPNCli
 windows-amd64: prepare
 	rm -rf $(BINDIR)/*
 	go run -v "github.com/sagernet/cronet-go/cmd/build-naive@$(CRONET_GO_VERSION)" extract-lib --target windows/amd64 -o $(BINDIR)/
@@ -78,7 +86,7 @@ windows-amd64: prepare
 	go install -mod=readonly github.com/akavel/rsrc@latest ||echo "rsrc error in installation"
 	go run ./cli tunnel exit
 	cp $(BINDIR)/$(LIBNAME).dll ./$(LIBNAME).dll
-	$$(go env GOPATH)/bin/rsrc -ico ./assets/hiddify-cli.ico -o ./cmd/bydll/cli.syso ||echo "rsrc error in syso"
+	$$(go env GOPATH)/bin/rsrc -ico ./assets/rayn-cli.ico -o ./cmd/bydll/cli.syso ||echo "rsrc error in syso"
 	env GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc CGO_LDFLAGS="$(LIBNAME).dll" $(GOBUILDSRV) -o $(BINDIR)/$(CLINAME).exe ./cmd/bydll
 	rm ./*.dll
 	if [ ! -f $(BINDIR)/$(LIBNAME).dll -o ! -f $(BINDIR)/$(CLINAME).exe ]; then \

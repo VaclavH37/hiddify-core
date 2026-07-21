@@ -23,7 +23,7 @@ var (
 )
 
 var mainCommand = &cobra.Command{
-	Use:              "HiddifyCli",
+	Use:              "RaynVPNCli",
 	PersistentPreRun: preRun,
 }
 

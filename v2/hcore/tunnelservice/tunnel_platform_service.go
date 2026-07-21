@@ -69,8 +69,8 @@ func getCurrentExecutableDirectory() string {
 
 func StartTunnelService(goArg string) (int, string) {
 	svcConfig := &service.Config{
-		Name:        "HiddifyTunnelService",
-		DisplayName: "Hiddify Tunnel Service",
+		Name:        "RaynVPNTunnelService",
+		DisplayName: "Rayn VPN Tunnel Service",
 		Arguments:   []string{"tunnel", "run"},
 		Description: "This is a bridge for tunnel",
 		Option: map[string]interface{}{

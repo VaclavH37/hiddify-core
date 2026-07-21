@@ -54,7 +54,7 @@ func makeTunnelConfig(in *TunnelStartRequest) option.Options {
 					StrictRoute:            in.StrictRoute,
 					AutoRoute:              true,
 					Address:                ips,
-					InterfaceName:          "HiddifyTunnel",
+					InterfaceName:          "RaynTunnel",
 					Stack:                  in.Stack,
 				},
 			},
@@ -85,10 +85,10 @@ func makeTunnelConfig(in *TunnelStartRequest) option.Options {
 					DefaultOptions: option.DefaultRule{
 						RawDefaultRule: option.RawDefaultRule{
 							ProcessName: []string{
-								"Hiddify.exe",
-								"Hiddify",
-								"HiddifyCli",
-								"HiddifyCli.exe",
+								"RaynVPN.exe",
+								"RaynVPN",
+								"RaynVPNCli",
+								"RaynVPNCli.exe",
 							},
 						},
 						RuleAction: option.RuleAction{

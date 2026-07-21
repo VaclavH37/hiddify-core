@@ -148,11 +148,11 @@ func getTunnelServicePath() string {
 	binFolder := filepath.Dir(exePath)
 	switch runtime.GOOS {
 	case "windows":
-		fullPath = "HiddifyCli.exe"
+		fullPath = "RaynVPNCli.exe"
 	case "darwin":
 		fallthrough
 	default:
-		fullPath = "HiddifyCli"
+		fullPath = "RaynVPNCli"
 	}
 
 	abspath, _ := filepath.Abs(filepath.Join(binFolder, fullPath))

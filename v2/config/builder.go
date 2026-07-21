@@ -286,9 +286,15 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			// URLs:      opt.ConnectionTestUrls,
 			// Interval:  badoption.Duration(opt.URLTestInterval.Duration()),
 			// IdleTimeout: badoption.Duration(opt.URLTestIdleTimeout.Duration()),
-			Tolerance: 1,
+			// Tolerance is a hysteresis band (ms): lowest-delay keeps the current exit
+			// unless a candidate is more than this much faster. Prevents flapping when
+			// every exit sits at a similar RTT behind the same hub.
+			Tolerance: opt.URLTestTolerance,
 			// IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
-			InterruptExistConnections: true,
+			// Automatic re-selection must NOT tear down live connections: existing
+			// connections ride the previous exit to completion; only new connections use
+			// the newly selected one. (Manual switches via `select` still interrupt.)
+			InterruptExistConnections: false,
 		},
 	}
 
@@ -303,9 +309,10 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			// URLs:      opt.ConnectionTestUrls,
 			// Interval:  badoption.Duration(opt.URLTestInterval.Duration()),
 			// IdleTimeout: badoption.Duration(opt.URLTestIdleTimeout.Duration()),
-			Tolerance: 1,
+			Tolerance: opt.URLTestTolerance,
 			// IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
-			InterruptExistConnections: true,
+			// See note on `lowest`: automatic groups must not interrupt live connections.
+			InterruptExistConnections: false,
 		},
 	}
 	defaultSelect := tags[0]
@@ -1063,24 +1070,12 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		})
 	}
-	// Always reject QUIC (UDP/443). All nodes are REALITY-VISION-XTLS, which is
-	// TCP-only — QUIC is never carried over the tunnel, so blocking it costs
-	// nothing and avoids pointless UDP/443 processing. Not user-configurable;
-	// the vestigial RouteOptions.BlockQuic option field is no longer consulted.
-	routeRules = append(routeRules, option.Rule{
-		Type: C.RuleTypeDefault,
-		DefaultOptions: option.DefaultRule{
-			RawDefaultRule: option.RawDefaultRule{
-				Protocol: []string{C.ProtocolQUIC},
-			},
-			RuleAction: option.RuleAction{
-				Action: C.RuleActionTypeReject,
-				RejectOptions: option.RejectActionOptions{
-					Method: C.RuleActionRejectMethodDefault,
-				},
-			},
-		},
-	})
+	// QUIC (UDP/443) is NOT blocked. Since the node fleet migrated from
+	// SS-2022 to VLESS+TLS, the inner tunnel preserves UDP-over-TCP (sing-box
+	// VLESS defaults packet_encoding to xudp when the field is omitted), so
+	// QUIC datagrams ride the REALITY outer tunnel. QUIC therefore falls
+	// through to Final (OutboundMainDetour) like any other traffic. The
+	// vestigial RouteOptions.BlockQuic option field remains unused.
 	options.Route = &option.RouteOptions{
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
