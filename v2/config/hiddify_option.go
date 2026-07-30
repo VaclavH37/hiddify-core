@@ -71,7 +71,12 @@ type URLTestOptions struct {
 
 type RouteOptions struct {
 	ResolveDestination     bool                  `json:"resolve-destination,omitempty"`
-	IPv6Mode               option.DomainStrategy `json:"ipv6-mode,omitempty"`
+	// IPv6Mode was removed: it was serialised, shipped over gRPC and persisted,
+	// yet read nowhere — both use sites in builder.go (setInbound's domain
+	// strategy and the tun address switch) are commented out upstream. The tun's
+	// IPv6 address is decided by isIPv6Supported(), a host probe. The client no
+	// longer sends `ipv6-mode`; an older client that still does is harmless,
+	// since encoding/json ignores unknown fields.
 	BypassLAN              bool                  `json:"bypass-lan,omitempty"`
 	AllowConnectionFromLAN bool                  `json:"allow-connection-from-lan,omitempty"`
 	// BlockQuic suppresses tunnelled HTTP/3: rejects UDP/443 that reaches the tunnel and
@@ -156,7 +161,6 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 		},
 		RouteOptions: RouteOptions{
 			ResolveDestination:     false,
-			IPv6Mode:               option.DomainStrategy(dns.DomainStrategyAsIS),
 			BypassLAN:              false,
 			AllowConnectionFromLAN: false,
 			BlockQuic:              true,

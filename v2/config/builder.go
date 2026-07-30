@@ -443,6 +443,8 @@ func setLog(options *option.Options, opt *HiddifyOptions) {
 		DisableColor: true,
 	}
 }
+// isIPv6Supported reports whether the HOST has a usable IPv6 stack. It says
+// nothing about whether the tunnel can carry IPv6 — see tunnelIPv6Enabled.
 func isIPv6Supported() bool {
 	if C.IsIos || C.IsDarwin {
 		return true
@@ -450,14 +452,41 @@ func isIPv6Supported() bool {
 	_, err := net.ResolveIPAddr("ip6", "::1")
 	return err == nil
 }
+
+// tunnelIPv6Enabled reports whether the TUN inbound claims an IPv6 address, and
+// therefore whether IPv6 traffic is captured by the tunnel at all rather than
+// leaving over the host's native route.
+//
+// Two conditions, only the first of which is live today:
+//
+//  1. the host has a usable IPv6 stack, and
+//  2. the exit can actually carry IPv6 to the internet.
+//
+// (2) is assumed true. When hub IPv6 egress becomes real, gate it HERE — this
+// is deliberately the single place that decides, so the policy cannot drift
+// from the address assignment in setInbound. The likely shape is a
+// `TunnelIPv6` field on RouteOptions fed from the subscription (the hub knows
+// its own egress capability) rather than from a user setting.
+//
+// If it ever does become user-facing, wire the setting to THIS function and add
+// a test asserting the tun address list changes with it. The previous
+// `ipv6-mode` control was serialised, shipped over gRPC and persisted while
+// being read by nothing, which is worse than offering no control at all —
+// users believed "IPv6: disable" protected them and it did nothing.
+func tunnelIPv6Enabled(hopt *HiddifyOptions) bool {
+	if !isIPv6Supported() {
+		return false
+	}
+	// Condition (2): hub IPv6 egress. Unconditional for now.
+	_ = hopt
+	return true
+}
+
 func setInbound(options *option.Options, hopt *HiddifyOptions) {
-	// var inboundDomainStrategy option.DomainStrategy
-	// if !opt.ResolveDestination {
-	// 	inboundDomainStrategy = option.DomainStrategy(dns.DomainStrategyAsIS)
-	// } else {
-	// 	inboundDomainStrategy = opt.IPv6Mode
-	// }
-	ipv6Enable := isIPv6Supported()
+	// Distinct questions, deliberately distinct variables: what the tunnel
+	// captures vs what the local listener can bind to.
+	tunIPv6 := tunnelIPv6Enabled(hopt)
+	hostIPv6 := isIPv6Supported()
 	if hopt.EnableTun {
 
 		opts := option.TunInboundOptions{
@@ -476,20 +505,11 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 
 			Options: &opts,
 		}
-		// switch hopt.IPv6Mode {
-		// case option.DomainStrategy(dns.DomainStrategyUseIPv4):
-		// 	opts.Address = []netip.Prefix{
-		// 		netip.MustParsePrefix("172.19.0.1/28"),
-		// 	}
-		// case option.DomainStrategy(dns.DomainStrategyUseIPv6):
-		// 	opts.Address = []netip.Prefix{
-		// 		netip.MustParsePrefix("fdfe:dcba:9876::1/126"),
-		// 	}
-		// default:
-
-		// }
+		// Claiming an IPv6 address here is what makes AutoRoute install a ::/0
+		// route into the tun. Without it the host keeps its native IPv6 route
+		// and IPv6 traffic bypasses the tunnel entirely.
 		opts.Address = []netip.Prefix{netip.MustParsePrefix("172.19.0.1/28")}
-		if ipv6Enable {
+		if tunIPv6 {
 			opts.Address = append(opts.Address, netip.MustParsePrefix("fdfe:dcba:9876::1/126"))
 		}
 
@@ -500,13 +520,16 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 	binds := []string{}
 
 	if hopt.AllowConnectionFromLAN {
-		if ipv6Enable {
+		// Host capability, not tunnel policy: this is which local address the
+		// mixed inbound listens on.
+		if hostIPv6 {
 			binds = append(binds, "::")
 		} else {
 			binds = append(binds, "0.0.0.0")
 		}
 	} else {
-		if ipv6Enable {
+		// Also host capability: binding the loopback listener to ::1.
+		if hostIPv6 {
 			binds = append(binds, "::1")
 		}
 		binds = append(binds, "127.0.0.1")

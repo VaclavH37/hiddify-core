@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/hiddify/hiddify-core/v2/config"
@@ -30,20 +29,23 @@ func (s *CoreService) StartService(ctx context.Context, in *StartRequest) (*Core
 	return StartService(ctx, in)
 }
 
+// saveLastStartRequest persists only the profile *name*.
+//
+// Rayn: the config itself is deliberately NOT persisted here. The client stores
+// it encrypted at rest (configs/<id>.enc, AES-256-GCM under a per-install key
+// held in the platform keystore) and hands the plaintext to the core in memory —
+// over gRPC when the app is driving, or via Mobile.Start(_, configContent) when
+// Android's quick-settings tile / iOS on-demand starts the core with no app
+// process alive. Writing ConfigContent into this LevelDB table would put the
+// hub IP, per-user UUIDs and Reality shortIDs straight back on disk in
+// plaintext and silently defeat the whole scheme, and ConfigPath no longer
+// names anything the core can load.
 func saveLastStartRequest(in *StartRequest) error {
-	if in.ConfigContent == "" && in.ConfigPath == "" {
+	if in.ConfigName == "" {
 		return nil
 	}
 	settings := db.GetTable[hcommon.AppSettings]()
 	return settings.UpdateInsert(
-		&hcommon.AppSettings{
-			Id:    "lastStartRequestPath",
-			Value: in.ConfigPath,
-		},
-		&hcommon.AppSettings{
-			Id:    "lastStartRequestContent",
-			Value: in.ConfigContent,
-		},
 		&hcommon.AppSettings{
 			Id:    "lastStartRequestName",
 			Value: in.ConfigName,
@@ -51,29 +53,32 @@ func saveLastStartRequest(in *StartRequest) error {
 	)
 }
 
+// loadLastStartRequestIfNeeded fills in the profile name for a start request
+// that already carries a config, and otherwise fails.
+//
+// Rayn: nothing can be restored from storage any more (see saveLastStartRequest),
+// so a caller that supplies neither ConfigContent nor ConfigPath is a bug — the
+// native shells must decrypt configs/<id>.enc and pass the content. Returning a
+// blank StartRequest here would reach BuildConfig as os.ReadFile("") and surface
+// as an unreadable "The system cannot find the file specified" instead of
+// something a log reader can act on.
 func loadLastStartRequestIfNeeded(in *StartRequest) (*StartRequest, error) {
-	if in != nil && (in.ConfigContent != "" || in.ConfigPath != "") {
+	if in == nil || (in.ConfigContent == "" && in.ConfigPath == "") {
+		return nil, errors.New("no config supplied: the caller must pass ConfigContent (the app decrypts configs/<id>.enc and hands it over); nothing is restorable from storage")
+	}
+	if in.ConfigName != "" {
 		return in, nil
 	}
 	settings := db.GetTable[hcommon.AppSettings]()
-	lastPath, err := settings.Get("lastStartRequestPath")
-	if err != nil {
-		return nil, err
-	}
-	lastContent, err := settings.Get("lastStartRequestContent")
-	if err != nil {
-		return nil, err
-	}
-
 	lastName, err := settings.Get("lastStartRequestName")
 	if err != nil {
-		return nil, err
+		// A missing name is cosmetic (notification title only) — never fatal.
+		return in, nil
 	}
-	return &StartRequest{
-		ConfigPath:    lastPath.Value.(string),
-		ConfigContent: lastContent.Value.(string),
-		ConfigName:    lastName.Value.(string),
-	}, nil
+	if name, ok := lastName.Value.(string); ok {
+		in.ConfigName = name
+	}
+	return in, nil
 }
 
 func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfoResponse, err error) {
@@ -117,17 +122,29 @@ func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfo
 	if err := service_manager.OnMainServicePreStart(options); err != nil {
 		return errorWrapper(MessageType_ERROR_EXTENSION, err)
 	}
-	currentBuildConfigPath := filepath.Join(sWorkingPath, "data/current-config.json")
-	Log(LogLevel_DEBUG, LogType_CORE, "Saving config to ", currentBuildConfigPath)
+	// Rayn: two things upstream did here are deliberately gone.
+	//
+	// 1. `config.SaveCurrentConfig(ctx, sWorkingPath+"/data/current-config.json", …)`
+	//    wrote the fully built config to disk on every start. Nothing in the
+	//    core ever read it back — it was a debug artefact that left the hub IP,
+	//    per-user UUIDs, Reality shortIDs and our whole routing/DNS design
+	//    sitting in plaintext in %APPDATA%.
+	//
+	// 2. `if static.debug { Log(…, "Current Config is:\n", string(pout)) }`
+	//    dumped the same content into the log stream, which reaches the in-app
+	//    Logs page and the share sheet.
+	//
+	// Neither could simply be gated: `static.debug` is set from the Settings →
+	// General debug toggle AND from the user-selectable log level (see
+	// ChangeHiddifySettings), so a user picking "debug" would resurrect both in
+	// a release build. That is precisely the disclosure the at-rest encryption
+	// exists to prevent, so the config no longer leaves memory here at all.
+	//
+	// For local routing/DNS work the dump is available behind a build tag —
+	// `make build-windows-libs EXTRA_TAGS=raynconfigdump`. In a shipped core
+	// this call is an empty function body (configdump_disabled.go).
+	dumpBuiltConfig(ctx, options)
 
-	config.SaveCurrentConfig(ctx, currentBuildConfigPath, *options)
-	if static.debug {
-		pout, err := options.MarshalJSONContext(ctx)
-		if err != nil {
-			return errorWrapper(MessageType_ERROR_BUILDING_CONFIG, err)
-		}
-		Log(LogLevel_INFO, LogType_CORE, "Current Config is:\n", string(pout))
-	}
 	ctx = libbox.FromContext(ctx, static.globalPlatformInterface)
 	if static.globalPlatformInterface != nil {
 		platformWrapper := libbox.WrapPlatformInterface(static.globalPlatformInterface)
