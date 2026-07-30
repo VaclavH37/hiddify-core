@@ -256,44 +256,40 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		endpoints = append(endpoints, *out)
 	}
 	if len(opt.ConnectionTestUrls) == 0 {
-		opt.ConnectionTestUrls = []string{opt.ConnectionTestUrl, "https://www.google.com/generate_204", "http://captive.apple.com/generate_204", "https://cp.cloudflare.com"}
+		// !!! Every HOSTNAME here is force-pinned to the CN-direct resolver
+		// (doh.pub) by addForceDirect() in dns.go, with a 24h TTL, and that
+		// answer is shared with ordinary browser traffic. So a probe host MUST
+		// resolve CORRECTLY via a mainland resolver. NEVER put a GFW-poisoned
+		// domain here — Google/gstatic/YouTube etc. return poisoned addresses
+		// that then break real page loads, not just the probe.
+		// IP literals are exempt (getHostnameIfNotIP skips them) and are the
+		// safest choice. HTTPS only.
+		opt.ConnectionTestUrls = []string{opt.ConnectionTestUrl, "https://1.1.1.1", "https://captive.apple.com/hotspot-detect.html"}
 		if isBlockedConnectionTestUrl(opt.ConnectionTestUrl) {
 			opt.ConnectionTestUrls = []string{opt.ConnectionTestUrl}
 		}
 	}
-	// urlTest := option.Outbound{
-	// 	Type: C.TypeURLTest,
-	// 	Tag:  OutboundURLTestTag,
-	// 	Options: &option.URLTestOutboundOptions{
-	// 		Outbounds: tags,
-	// 		URL:       opt.ConnectionTestUrl,
-	// 		URLs:      opt.ConnectionTestUrls,
-	// 		Interval:  badoption.Duration(opt.URLTestInterval.Duration()),
-	// 		// IdleTimeout: badoption.Duration(opt.URLTestIdleTimeout.Duration()),
-	// 		Tolerance:                 1,
-	// 		IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
-	// 		InterruptExistConnections: true,
-	// 	},
-	// }
+	// `lowest` uses the STANDARD sing-box url-test group, not the custom `balancer`.
+	// Rationale: the custom balancer's `Tolerance` is unimplemented, so lowest-delay
+	// re-selected on any millisecond of probe jitter and (with interrupt=true) tore down
+	// every live connection each time — the "page loads then stalls" symptom. The url-test
+	// group's `Tolerance` is a real hysteresis band: URLTestGroup.Select keeps the current
+	// exit unless a candidate is more than `tolerance` ms faster. This fix is config-only
+	// (both types already exist in the imported sing-box), and does not fork it.
+	//
+	// `InterruptExistConnections: false`: automatic re-selection must not drop live
+	// connections — existing ones ride the previous exit to completion; only new
+	// connections use the newly selected one. Manual switches via `select` still interrupt.
 	urlTest := option.Outbound{
-		Type: C.TypeBalancer,
+		Type: C.TypeURLTest,
 		Tag:  OutboundURLTestTag,
-		Options: &option.BalancerOutboundOptions{
-			Outbounds:            tags,
-			Strategy:             "lowest-delay",
-			DelayAcceptableRatio: 2,
-			// URL:       opt.ConnectionTestUrl,
-			// URLs:      opt.ConnectionTestUrls,
-			// Interval:  badoption.Duration(opt.URLTestInterval.Duration()),
-			// IdleTimeout: badoption.Duration(opt.URLTestIdleTimeout.Duration()),
-			// Tolerance is a hysteresis band (ms): lowest-delay keeps the current exit
-			// unless a candidate is more than this much faster. Prevents flapping when
-			// every exit sits at a similar RTT behind the same hub.
-			Tolerance: opt.URLTestTolerance,
-			// IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
-			// Automatic re-selection must NOT tear down live connections: existing
-			// connections ride the previous exit to completion; only new connections use
-			// the newly selected one. (Manual switches via `select` still interrupt.)
+		Options: &option.URLTestOutboundOptions{
+			Outbounds:                 tags,
+			URL:                       opt.ConnectionTestUrl,
+			URLs:                      opt.ConnectionTestUrls,
+			Interval:                  badoption.Duration(opt.URLTestInterval.Duration()),
+			IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
+			Tolerance:                 opt.URLTestTolerance,
 			InterruptExistConnections: false,
 		},
 	}
@@ -305,13 +301,8 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			Outbounds:            tags,
 			Strategy:             opt.BalancerStrategy,
 			DelayAcceptableRatio: 2,
-			// URL:       opt.ConnectionTestUrl,
-			// URLs:      opt.ConnectionTestUrls,
-			// Interval:  badoption.Duration(opt.URLTestInterval.Duration()),
-			// IdleTimeout: badoption.Duration(opt.URLTestIdleTimeout.Duration()),
-			Tolerance: opt.URLTestTolerance,
-			// IdleTimeout:               badoption.Duration(opt.URLTestInterval.Duration().Nanoseconds() * 3),
-			// See note on `lowest`: automatic groups must not interrupt live connections.
+			// Round-robin ignores Tolerance (unimplemented in the balancer anyway); the
+			// meaningful change here is not interrupting live connections on re-selection.
 			InterruptExistConnections: false,
 		},
 	}
@@ -401,7 +392,10 @@ func contains(slice []string, item string) bool {
 
 func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 	if len(hopt.ConnectionTestUrls) == 0 {
-		hopt.ConnectionTestUrls = []string{hopt.ConnectionTestUrl, "http://captive.apple.com/generate_204", "https://cp.cloudflare.com", "https://google.com/generate_204"}
+		// HTTPS only, and NO GFW-poisoned hostnames — see the matching list in
+		// setOutbounds for why (these hosts get pinned to the CN-direct resolver
+		// and the poisoned answer leaks into normal browsing).
+		hopt.ConnectionTestUrls = []string{hopt.ConnectionTestUrl, "https://1.1.1.1", "https://captive.apple.com/hotspot-detect.html"}
 		if isBlockedConnectionTestUrl(hopt.ConnectionTestUrl) {
 			hopt.ConnectionTestUrls = []string{hopt.ConnectionTestUrl}
 		}
@@ -420,8 +414,11 @@ func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 			},
 
 			CacheFile: &option.CacheFileOptions{
-				Enabled:         true,
-				StoreFakeIP:     true,
+				Enabled: true,
+				// FakeIP is disabled (hub runs domainStrategy:AsIs and needs real
+				// IPs), so do not persist a synthetic 198.18.x.x map — a stale
+				// cache would otherwise resolve against fake addresses after upgrade.
+				StoreFakeIP:     false,
 				StoreRDRC:       true,
 				StoreWARPConfig: true,
 				Path:            "data/clash.db",
@@ -635,11 +632,36 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 
 	dnsRules = append(dnsRules, forceDirectRules...)
 
+	// Explicit sniffer list, deliberately WITHOUT "quic".
+	//
+	// The default packet sniffers include QUICClientHello, which returns
+	// ErrNeedMoreData on a fragmented QUIC client hello (Chrome's is routinely
+	// fragmented). sing-box then re-reads with a fresh C.ReadPayloadTimeout
+	// (300ms) deadline, so the packet sits in the sniffer instead of reaching the
+	// UDP/443 reject rule below. Measured: only 4 of ~25 QUIC attempts reached
+	// the reject; 21 stalled in the sniffer and 16 died on i/o timeout at ~300ms.
+	// That produces exactly the slow, packet-loss-style fallback the reject rule
+	// exists to avoid (its method=default ICMP unreachable is meant to bounce the
+	// client to TCP instantly).
+	//
+	// Dropping the QUIC sniffer costs the SNI on QUIC flows only. Direct/in-region
+	// QUIC is unaffected because direct-regional-ips is an IP rule-set and still
+	// matches without a domain; everything else is bound for the tunnel and is
+	// rejected anyway. TCP sniffing (tls/http) and DNS sniffing are untouched —
+	// "dns" is required by the hijack-dns rule that follows.
 	routeRules = append(routeRules, option.Rule{
 		Type: C.RuleTypeDefault,
 		DefaultOptions: option.DefaultRule{
 			RuleAction: option.RuleAction{
 				Action: C.RuleActionTypeSniff,
+				SniffOptions: option.RouteActionSniff{
+					Sniffer: badoption.Listable[string]{
+						C.ProtocolTLS,
+						C.ProtocolHTTP,
+						C.ProtocolDNS,
+						C.ProtocolSTUN,
+					},
+				},
 			},
 		},
 	})
@@ -655,24 +677,13 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		},
 	})
 
-	routeRules = append(routeRules, option.Rule{
-		Type: C.RuleTypeDefault,
-
-		DefaultOptions: option.DefaultRule{
-			RawDefaultRule: option.RawDefaultRule{
-				IPCIDR: []string{
-					"10.10.34.0/24",
-					"2001:4188:2:600:10:10:34:0/120",
-				},
-			},
-			RuleAction: option.RuleAction{
-				Action: C.RuleActionTypeRoute,
-				RouteOptions: option.RouteActionOptions{
-					Outbound: OutboundMainDetour,
-				},
-			},
-		},
-	})
+	// Removed: an upstream rule forcing 10.10.34.0/24 + 2001:4188:2:600::/120 to
+	// the proxy. Those are Iranian filternet block-page sentinel addresses — an
+	// upstream artifact with no meaning for this build. Keeping it sent any user
+	// whose LAN happens to use 10.10.34.0/24 through the tunnel, where the hub
+	// blackholes geoip:private and the connection dies with no useful error.
+	// DNS-level poison filtering (dns/blocked_checker.go) and the WARP endpoint
+	// checks (isBlockedIP / isBlockedDomain) are independent and unaffected.
 	// {
 	// 	Type: C.RuleTypeDefault,
 	// 	DefaultOptions: option.DefaultRule{
@@ -794,7 +805,11 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		})
 	}
-	rejectRCode := (option.DNSRCode(sdns.RcodeRefused))
+	// NXDOMAIN, not REFUSED: REFUSED reads as "this resolver won't serve you",
+	// so clients treat it as a resolver fault and retry / fail over to their own
+	// DNS (a retry storm on ad-heavy pages). NXDOMAIN is the correct "this name
+	// does not resolve" negative answer for a blocklist hit.
+	rejectRCode := (option.DNSRCode(sdns.RcodeNameError))
 	rejectDnsAction := option.DNSRuleAction{
 		Action: C.RuleActionTypePredefined,
 		PredefinedOptions: option.DNSRouteActionPredefined{
@@ -899,9 +914,9 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	}
 
 	// China-optimized routing — always on. Sends private + apple-cn + cn direct,
-	// blocks QUIC outbound (browsers fall back gracefully), and (off-iOS)
-	// routes non-CN A/AAAA queries through FakeIP for zero-RTT proxy
-	// resolution. Rule-sets are bundled into the AAB and extracted onto the
+	// blocks QUIC outbound (browsers fall back gracefully); non-CN A/AAAA queries
+	// resolve for real over the tunnel (dns-remote) so the hub receives IPs.
+	// Rule-sets are bundled into the AAB and extracted onto the
 	// Go core's BasePath by lib/core/rulesets/ruleset_extractor.dart — see
 	// RULESETS.md for the refresh workflow. Two upstream entries that the
 	// previous remote-fetch config silently 404'd on (sing-geoip/geoip-private
@@ -945,6 +960,49 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 
 	rulesets = append(rulesets, chinaRulesets...)
 
+	// direct-regional-sites is upstream geosite-cn, which bundles the "google-cn"
+	// domain set. Those hostnames are NOT genuinely CN-served — they are
+	// GFW-poisoned — so treating them as CN-direct failed twice over: doh.pub
+	// answered ssl.gstatic.com / update.googleapis.com / clientservices.googleapis.com
+	// with 220.181.174.x, and the matching route rule then dialled that direct.
+	// Keep the Google family on the remote resolver and the tunnel.
+	//
+	// Ordering is load-bearing: the DNS rule must precede the CN-direct DNS rules
+	// below, and the route side is expressed as an EXCLUSION on the direct rule
+	// (not a route-to-tunnel rule of its own) so these connections still fall
+	// through to the `resolve` action — a terminal rule here would hand the hub a
+	// domain name instead of an address.
+	googleRemoteSuffixes := []string{
+		"gstatic.com",
+		"googleapis.com",
+		"googleusercontent.com",
+		"googlevideo.com",
+		"googletagmanager.com",
+		"google-analytics.com",
+		"ggpht.com",
+		"ytimg.com",
+		// Google cert PKI / load-balancer apexes: geosite-cn lists these in its
+		// google-cn set, but the GFW poisons them (c.pki.goog resolved to a China
+		// Telecom IP, 220.181.174.x, and was routed direct). pki.goog is Google's
+		// OCSP/CRL; l.google.com is the LB apex those PKI names CNAME under. All
+		// of .goog / *.l.google.com is Google and blocked in CN, so tunnelling is
+		// unconditionally correct.
+		"pki.goog",
+		"l.google.com",
+	}
+	dnsRules = append(dnsRules, option.DefaultDNSRule{
+		RawDefaultDNSRule: option.RawDefaultDNSRule{DomainSuffix: googleRemoteSuffixes},
+		DNSRuleAction: option.DNSRuleAction{
+			Action: C.RuleActionTypeRoute,
+			RouteOptions: option.DNSRouteActionOptions{
+				Server:         DNSMultiRemoteTag,
+				Strategy:       hopt.RemoteDnsDomainStrategy,
+				RewriteTTL:     &REMOTE_DNS_TTL,
+				BypassIfFailed: false,
+			},
+		},
+	})
+
 	// DNS: send these domains direct via a CN-reachable DoH endpoint. The
 	// default DirectDnsAddress (1.1.1.1) is GFW-poisoned, so apple-cn /
 	// microsoft-cn / geosite-cn lookups need a resolver that actually answers
@@ -977,11 +1035,29 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		},
 	})
-	// Route: same destinations bypass the proxy.
+	// Route: same destinations bypass the proxy — EXCEPT the Google family, which
+	// geosite-cn wrongly includes (see googleRemoteSuffixes above). Expressed as
+	// "in the CN rule-sets AND NOT a Google suffix" so Google traffic falls
+	// through to the `resolve` action and then the tunnel, rather than being
+	// routed direct into a poisoned answer.
 	routeRules = append(routeRules, option.Rule{
-		Type: C.RuleTypeDefault,
-		DefaultOptions: option.DefaultRule{
-			RawDefaultRule: option.RawDefaultRule{RuleSet: chinaDirectTags},
+		Type: C.RuleTypeLogical,
+		LogicalOptions: option.LogicalRule{
+			RawLogicalRule: option.RawLogicalRule{
+				Mode: C.LogicalTypeAnd,
+				Rules: []option.Rule{
+					{
+						Type:           C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{RawDefaultRule: option.RawDefaultRule{RuleSet: chinaDirectTags}},
+					},
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{DomainSuffix: googleRemoteSuffixes, Invert: true},
+						},
+					},
+				},
+			},
 			RuleAction: option.RuleAction{
 				Action:       C.RuleActionTypeRoute,
 				RouteOptions: option.RouteActionOptions{Outbound: OutboundDirectTag},
@@ -989,34 +1065,9 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		},
 	})
 
-	// FakeIP for non-CN A/AAAA — skip on iOS to keep the NetworkExtension
-	// process under its ~50 MB memory cap (geosite-geolocation-!cn is the
-	// largest commonly-used rule set, ~4-8 MB compiled).
-	if hopt.EnableFakeDNS && !C.IsIos {
-		rulesets = append(rulesets, option.RuleSet{
-			Tag: "fakeip-remote-sites", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
-			LocalOptions: option.LocalRuleSet{Path: "rulesets/fakeip-remote-sites.srs"},
-		})
-		dnsRules = append(dnsRules, option.DefaultDNSRule{
-			RawDefaultDNSRule: option.RawDefaultDNSRule{
-				RuleSet: []string{"fakeip-remote-sites"},
-				QueryType: badoption.Listable[option.DNSQueryType]{
-					option.DNSQueryType(mDNS.StringToType["A"]),
-					option.DNSQueryType(mDNS.StringToType["AAAA"]),
-				},
-			},
-			DNSRuleAction: option.DNSRuleAction{
-				Action: C.RuleActionTypeRoute,
-				RouteOptions: option.DNSRouteActionOptions{
-					Server:         DNSFakeTag,
-					Strategy:       hopt.RemoteDnsDomainStrategy,
-					RewriteTTL:     &DEFAULT_DNS_TTL,
-					DisableCache:   true,
-					BypassIfFailed: false,
-				},
-			},
-		})
-	}
+	// FakeIP removed: the hub runs domainStrategy:AsIs, so non-CN A/AAAA queries
+	// must resolve to real addresses (handled by the terminal dns-remote rule
+	// below), not synthetic 198.18.x.x. See the resolve route rule that follows.
 
 	if hopt.Region != "other" {
 		// Catch-all for any .<region> domain not covered by the rule-sets
@@ -1070,37 +1121,81 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		})
 	}
-	// QUIC (UDP/443) is NOT blocked. Since the node fleet migrated from
-	// SS-2022 to VLESS+TLS, the inner tunnel preserves UDP-over-TCP (sing-box
-	// VLESS defaults packet_encoding to xudp when the field is omitted), so
-	// QUIC datagrams ride the REALITY outer tunnel. QUIC therefore falls
-	// through to Final (OutboundMainDetour) like any other traffic. The
-	// vestigial RouteOptions.BlockQuic option field remains unused.
+	// Resolve tunnel-bound domains to real IPs client-side before they reach the
+	// hub. The hub runs domainStrategy:AsIs and would otherwise receive a sniffed
+	// domain name (see the sniff rule above) and resolve it hub-side, breaking
+	// exit-local CDN edge selection. This runs AFTER the direct/.cn/private/Apple/
+	// regional rules, so those terminal route rules leave first and only
+	// tunnel-bound traffic is resolved here; it is a no-op when the destination is
+	// already an address. Server is dns-remote explicitly (NOT the default domain
+	// resolver, which points at a CN-local resolver) so the lookup detours
+	// client→hub→exit→1.1.1.1 and Cloudflare returns exit-local edges. resolve is
+	// a non-final action, so matching continues to the QUIC reject / Final below.
+	routeRules = append(routeRules, option.Rule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultRule{
+			RuleAction: option.RuleAction{
+				Action: C.RuleActionTypeResolve,
+				ResolveOptions: option.RouteActionResolve{
+					Server:     DNSRemoteTag,
+					Strategy:   option.DomainStrategy(C.DomainStrategyIPv4Only),
+					RewriteTTL: &REMOTE_DNS_TTL,
+				},
+			},
+		},
+	})
+	// Suppress tunnelled HTTP/3. Tunnelled QUIC (UDP/443) degrades badly over the
+	// REALITY-VISION-over-TCP leg (userspace datagram framing + double loss recovery across
+	// the long RTT), so reject it and let apps fall back to HTTP/2 on TCP/443. This runs
+	// AFTER the direct/.cn/private/Apple/regional rules above, so only traffic bound for the
+	// tunnel (Final) is affected — direct destinations keep their native UDP/QUIC path, and
+	// non-443 UDP (WebRTC, VoIP, games, DoQ) plus UDP/53 (hijacked earlier) are untouched.
+	// method=default returns ICMP unreachable → QUIC stacks fall back immediately; no_drop
+	// prevents sing-box downgrading to a silent drop under the cold-start QUIC burst
+	// (>50 rejects/30s), which is exactly when fast fallback matters. Gated by the
+	// (overridable) block-quic option so the backend can revert without a client rebuild.
+	if hopt.BlockQuic {
+		routeRules = append(routeRules, option.Rule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultRule{
+				RawDefaultRule: option.RawDefaultRule{
+					Network: badoption.Listable[string]{"udp"},
+					Port:    badoption.Listable[uint16]{443},
+				},
+				RuleAction: option.RuleAction{
+					Action: C.RuleActionTypeReject,
+					RejectOptions: option.RejectActionOptions{
+						Method: C.RuleActionRejectMethodDefault,
+						NoDrop: true,
+					},
+				},
+			},
+		})
+	}
 	options.Route = &option.RouteOptions{
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
 		AutoDetectInterface: (!C.IsAndroid && !C.IsIos) && (hopt.EnableTun || hopt.EnableTunService),
-		// Catch-all resolver for hostnames not matched by any DNS rule. Our proxy
-		// nodes are REALITY-VISION and addressed by raw IP (the cover domain
-		// lives in SNI, not in the `server` field), so this resolver is NOT on
-		// the tunnel bring-up path — dialing an IP needs no resolution. It only
-		// catches stray hostnames, which for an all-IP node set is effectively
-		// nothing during bring-up.
+		// default_domain_resolver must resolve without the tunnel — it is what
+		// resolves outbound server addresses in the first place. That rules out
+		// dns-remote by construction, and inside the GFW every direct-path
+		// resolver is either poisoned or PRC-operated.
 		//
-		// It points at the CN-reachable DoH server (doh.pub), which is
-		// static-IP bootstrapped (resolves without UDP/53) and returns real,
-		// non-poisoned answers for foreign domains inside the GFW. This is a
-		// single server on purpose: option.DomainResolveOptions has only one
-		// `Server` field and no BypassIfFailed, and it bypasses the DNS-rule
-		// engine — so the doh.pub→alidns fallback chain used by the CN-direct
-		// DNS *rules* cannot be expressed here, and no automatic fallback is
-		// possible. That is acceptable precisely because this path is off the
-		// critical bring-up route.
+		// DO NOT switch to local/system DNS (dns-local): that is the CN ISP
+		// resolver, which poisons foreign domains and would corrupt any stray
+		// foreign-hostname lookup this catch-all handles.
 		//
-		// DO NOT switch this to `local`/system DNS: the CN ISP resolver poisons
-		// foreign domains, which would corrupt any stray foreign-hostname lookup
-		// this catch-all handles. If nodes ever move to FQDN addressing, revisit
-		// (the only real lever would be pre-seeding node IPs into staticIPs).
+		// dns-trick-direct (fragmented DoH to Cloudflare) was considered and
+		// rejected: it still bootstraps via alidns, and fragmentation can fail
+		// with no fallback path for this setting.
+		//
+		// Accepted tradeoff: doh.pub (Tencent) sees whatever reaches this
+		// catch-all. Bounded by the MW invariant that hub addresses are always
+		// IP literals, asserted in the transform — see Step 14.15.
+		//
+		// Note: this block is CN-targeted. For non-CN distribution a
+		// region-conditional default is the eventual fix (deferred; see
+		// DECISION_default_domain_resolver.md).
 		DefaultDomainResolver: &option.DomainResolveOptions{
 			Server:   DNSCNDirectTag,
 			Strategy: hopt.DirectDnsDomainStrategy,
@@ -1115,46 +1210,44 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		// 	Path: opt.GeoSitePath,
 		// },
 	}
-	// if opt.EnableDNSRouting {
-	if hopt.EnableFakeDNS {
-		// inbounds := []string{InboundTUNTag}
-		// for _, inp := range options.Inbounds {
-		// 	if strings.Contains(inp.Tag, InboundDirectTag) || strings.Contains(inp.Tag, InboundRedirect) || strings.Contains(inp.Tag, InboundTProxy) {
-		// 		inbounds = append(inbounds, inp.Tag)
-		// 	}
-		// }
-		dnsRules = append(
-			dnsRules,
-			option.DefaultDNSRule{
-				RawDefaultDNSRule: option.RawDefaultDNSRule{
-					// Inbound: inbounds,
-					QueryType: badoption.Listable[option.DNSQueryType]{
-						option.DNSQueryType(mDNS.StringToType["A"]),
-						option.DNSQueryType(mDNS.StringToType["AAAA"]),
-					},
+	// HTTP/3 discovery suppression (companion to the UDP/443 route reject above): answer
+	// HTTPS/SVCB (type 65/64) queries with NOERROR + empty answer (NODATA), so cold clients
+	// never learn h3 is available and go straight to HTTP/2 without a failed QUIC attempt.
+	// Placed AFTER the direct/.cn DNS rules (which carry no query_type and so still resolve
+	// HTTPS/SVCB for direct destinations, preserving their native h3) and BEFORE the fakeip
+	// A/AAAA catch-all and the remote catch-all — so only tunnelled names are suppressed.
+	// NODATA (not NXDOMAIN, not REFUSED) is the correct, cacheable negative answer.
+	if hopt.BlockQuic {
+		noErrRcode := option.DNSRCode(sdns.RcodeSuccess)
+		dnsRules = append(dnsRules, option.DefaultDNSRule{
+			RawDefaultDNSRule: option.RawDefaultDNSRule{
+				QueryType: badoption.Listable[option.DNSQueryType]{
+					option.DNSQueryType(mDNS.StringToType["HTTPS"]),
+					option.DNSQueryType(mDNS.StringToType["SVCB"]),
 				},
-				DNSRuleAction: option.DNSRuleAction{
-					Action: C.RuleActionTypeRoute,
-					RouteOptions: option.DNSRouteActionOptions{
-						Server:         DNSFakeTag,
-						Strategy:       hopt.RemoteDnsDomainStrategy,
-						RewriteTTL:     &DEFAULT_DNS_TTL,
-						DisableCache:   true,
-						BypassIfFailed: false,
-					},
+			},
+			DNSRuleAction: option.DNSRuleAction{
+				Action: C.RuleActionTypePredefined,
+				PredefinedOptions: option.DNSRouteActionPredefined{
+					Rcode: &noErrRcode,
 				},
-			})
-
+			},
+		})
 	}
+	// FakeIP catch-all removed. A/AAAA queries for tunnelled names fall through to
+	// the terminal remote rule below, which resolves them for real over the
+	// tunnel (dns-remote → hub → exit), so the hub receives IPs, not names.
 
 	dnsRules = append(dnsRules, option.DefaultDNSRule{
 		RawDefaultDNSRule: option.RawDefaultDNSRule{},
 		DNSRuleAction: option.DNSRuleAction{
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
-				Server:         DNSMultiRemoteTag,
-				Strategy:       hopt.RemoteDnsDomainStrategy,
-				RewriteTTL:     &DEFAULT_DNS_TTL,
+				Server:   DNSMultiRemoteTag,
+				Strategy: hopt.RemoteDnsDomainStrategy,
+				// Short TTL: this is the remote-resolution catch-all that now
+				// caches real CDN addresses (see REMOTE_DNS_TTL in dns.go).
+				RewriteTTL:     &REMOTE_DNS_TTL,
 				BypassIfFailed: false,
 			},
 		},

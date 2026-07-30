@@ -74,7 +74,11 @@ type RouteOptions struct {
 	IPv6Mode               option.DomainStrategy `json:"ipv6-mode,omitempty"`
 	BypassLAN              bool                  `json:"bypass-lan,omitempty"`
 	AllowConnectionFromLAN bool                  `json:"allow-connection-from-lan,omitempty"`
-	BlockQuic              bool                  `json:"block-quic,omitempty"`
+	// BlockQuic suppresses tunnelled HTTP/3: rejects UDP/443 that reaches the tunnel and
+	// NODATA-answers HTTPS/SVCB DNS queries so clients don't discover h3. Overridable so the
+	// backend can revert per-subscription without a client rebuild. Only affects tunnelled
+	// traffic; direct/.cn/private and all non-443 UDP keep their native path.
+	BlockQuic              bool                  `json:"block-quic,omitempty" overridable:"true"`
 }
 
 type TLSTricks struct {
@@ -119,8 +123,16 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 			// fallback exists for any consumer of the Go core that doesn't
 			// populate this field. 1.1.1.1 was the upstream default but is
 			// GFW-poisoned, making it unsafe as a silent fallback.
-			DirectDnsAddress:        "https://dns.alidns.com/dns-query",
-			DirectDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyAsIS),
+			DirectDnsAddress: "https://dns.alidns.com/dns-query",
+			// ipv4_only, NOT as-is. This strategy is applied to every rule that
+			// resolves via the CN-direct resolvers (the geosite-cn / apple / private
+			// rule-sets and the connection-test pin), and those resolvers return
+			// GFW-poisoned AAAA records for foreign names — e.g. www.google.com came
+			// back as 2001::1, which the client then dialled ~200 times. as-is
+			// applies no filtering and lets that through; ipv4_only drops it. The
+			// remote resolver already uses ipv4_only, so this also removes a
+			// direct/remote inconsistency.
+			DirectDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyUseIPv4),
 			IndependentDNSCache:     false,
 			EnableFakeDNS:           false,
 			// EnableDNSRouting:        false,
@@ -147,10 +159,15 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 			IPv6Mode:               option.DomainStrategy(dns.DomainStrategyAsIS),
 			BypassLAN:              false,
 			AllowConnectionFromLAN: false,
+			BlockQuic:              true,
 		},
 		LogLevel: "warn",
-		// LogFile:        "/dev/null",
-		LogFile:        "data/box.log",
+		// Default to NO log file: a persistent log naming servers, domains and
+		// failure patterns is a liability on a device that may be inspected.
+		// The Flutter layer sends log-file="data/box.log" for debug/profile
+		// builds only (see config_option_repository.dart); release builds leave
+		// this empty so logging stays in memory/console.
+		LogFile:        "",
 		Region:         "cn",
 		EnableClashApi: true,
 

@@ -29,6 +29,13 @@ var DnsRemoteTags = []string{
 
 var DEFAULT_DNS_TTL = uint32(60 * 60 * 24)
 
+// TTL for rules that resolve REMOTELY (over the tunnel). Kept short: now that
+// FakeIP is gone these cache real CDN addresses, and Fastly/Cloudflare/Google
+// rotate edges continuously — a day-long pin turns a rotated edge into a black
+// hole. The stable .cn/direct-* rules keep DEFAULT_DNS_TTL (those queries are
+// cheap and the answers don't move).
+var REMOTE_DNS_TTL = uint32(60 * 60)
+
 func getDnsAddress(d string) string {
 	if !strings.Contains(d, "://") {
 		return "udp://" + d
@@ -119,7 +126,11 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 		RawDNSOptions: option.RawDNSOptions{
 			DNSClientOptions: option.DNSClientOptions{
 				IndependentCache: opt.IndependentDNSCache && !C.IsIos,
-				DisableExpire:    true,
+				// Expiry MUST stay on. While FakeIP was enabled the cached entries
+				// were synthetic so pinning them was harmless; now that real CDN
+				// addresses are cached, disabling expiry would pin them for the
+				// life of the process.
+				DisableExpire: false,
 			},
 			Final: DNSMultiRemoteTag,
 
@@ -140,18 +151,10 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 			Rules: []option.DNSRule{},
 		},
 	}
-	if opt.EnableFakeDNS {
-		inet4Range := badoption.Prefix(netip.MustParsePrefix("198.18.0.0/15"))
-		inet6Range := badoption.Prefix(netip.MustParsePrefix("fc00::/18"))
-		dnsOptions.Servers = append(dnsOptions.Servers, option.DNSServerOptions{
-			Tag:  DNSFakeTag,
-			Type: C.DNSTypeFakeIP,
-			Options: &option.FakeIPDNSServerOptions{
-				Inet4Range: &inet4Range,
-				Inet6Range: &inet6Range,
-			},
-		})
-	}
+	// FakeIP intentionally NOT registered. The hub runs domainStrategy:AsIs and
+	// needs real IP addresses; FakeIP would hand it synthetic 198.18.x.x that it
+	// maps back to a domain, defeating exit-local CDN resolution. Real resolution
+	// happens via the terminal dns-remote rule (builder.go) over the tunnel.
 	options.DNS = &dnsOptions
 
 	// options.DNS.StaticIPs["time.apple.com"] = []string{"time.g.aaplimg.com", "time.apple.com"}
