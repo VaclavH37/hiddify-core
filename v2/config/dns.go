@@ -28,6 +28,28 @@ var DnsRemoteTags = []string{
 	DNSTricksDirectTag,
 }
 
+// dropEmptyDirectDetour blanks a detour that names an outbound carrying no dial
+// options.
+//
+// sing-box 1.14 refuses to start any transport whose detour resolves to an
+// option-less direct outbound ("detour to an empty direct outbound makes no
+// sense", common/dialer/detour.go), and both of ours are exactly that:
+// `direct §hide§` has always been `&option.DirectOutboundOptions{}`, and
+// `direct-fragment §hide§` became one when 1.14 moved TLSFragment out of
+// DialerOptions. Blanking is behaviour-preserving — see the long note on
+// direct_detour below.
+//
+// This is a function rather than four literals because the WARP detour is
+// decided at build time: with WARP enabled it names a real endpoint and must be
+// left alone, and only its disabled fallback lands on direct-fragment.
+func dropEmptyDirectDetour(detour string) string {
+	switch detour {
+	case OutboundDirectTag, OutboundDirectFragmentTag:
+		return ""
+	}
+	return detour
+}
+
 var DEFAULT_DNS_TTL = uint32(60 * 60 * 24)
 
 // TTL for rules that resolve REMOTELY (over the tunnel). Kept short: now that
@@ -63,7 +85,7 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	if err != nil {
 		return err
 	}
-	remote_no_warp_dns, err := getDNSServerOptions(DNSRemoteNoWarpTag, opt.RemoteDnsAddress, DNSDirectTag, OutboundWARPConfigDetour)
+	remote_no_warp_dns, err := getDNSServerOptions(DNSRemoteNoWarpTag, opt.RemoteDnsAddress, DNSDirectTag, dropEmptyDirectDetour(OutboundWARPConfigDetour))
 	if err != nil {
 		return err
 	}
@@ -73,7 +95,27 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	// this build only targets CN networks: the direct DNS endpoint is an
 	// in-CN DoH server (alidns/doh.pub) where fragmentation adds latency and
 	// risks CDN-edge confusion without any evasion benefit.
-	direct_detour := OutboundDirectTag
+	//
+	// The detour is EMPTY, not OutboundDirectTag, and that is load-bearing.
+	//
+	// sing-box 1.14 rejects a detour pointing at a direct outbound that carries
+	// no dial options — "detour to an empty direct outbound makes no sense"
+	// (common/dialer/detour.go). Our `direct §hide§` is exactly that:
+	// `&option.DirectOutboundOptions{}`. The check runs when the transport's
+	// dialer is initialised, i.e. in Start, NOT in box.New — which is why
+	// libbox.CheckConfigOptions accepted this config while the shipped core
+	// could not bring a tunnel up. See TestRealProfileStartsTheBox.
+	//
+	// Dropping the detour is behaviour-preserving, not a workaround. With no
+	// detour and DefaultOutbound unset (dns/transport_dialer.go never sets it),
+	// dialer.NewWithOptions falls through to NewDefault — a plain direct system
+	// dial. That is precisely what detouring to an option-less direct outbound
+	// did. Domain resolution is unaffected: it is driven by DomainResolver
+	// (the third argument here), which is set either way.
+	//
+	// Do NOT "fix" this by pointing the detour at the proxy: these servers exist
+	// specifically to resolve CN destinations off-tunnel.
+	direct_detour := ""
 
 	direct_dns, err := getDNSServerOptions(DNSDirectTag, opt.DirectDnsAddress, DNSLocalTag, direct_detour)
 	if err != nil {
@@ -83,7 +125,7 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	// static-IP server (seeded in builder.go) and dials direct without TLS
 	// fragmentation — the endpoint is inside the GFW and fragmentation is both
 	// unnecessary and a likely CDN-edge irritant here.
-	cn_direct_dns, err := getDNSServerOptions(DNSCNDirectTag, "https://doh.pub/dns-query", DNSStaticTag, OutboundDirectTag)
+	cn_direct_dns, err := getDNSServerOptions(DNSCNDirectTag, "https://doh.pub/dns-query", DNSStaticTag, direct_detour)
 	if err != nil {
 		return err
 	}
@@ -92,11 +134,25 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	// primary→fallback via BypassIfFailed), so a single-provider outage no
 	// longer silently degrades CN routing to the proxy resolver. Bootstrapped
 	// via the same static-IP server; dials direct without fragmentation.
-	cn_direct_dns_fallback, err := getDNSServerOptions(DNSCNDirectTagFallback, "https://dns.alidns.com/dns-query", DNSStaticTag, OutboundDirectTag)
+	cn_direct_dns_fallback, err := getDNSServerOptions(DNSCNDirectTagFallback, "https://dns.alidns.com/dns-query", DNSStaticTag, direct_detour)
 	if err != nil {
 		return err
 	}
-	trick_dns, err := getDNSServerOptions(DNSTricksDirectTag, "https://dns.cloudflare.com/dns-query#fragment=300", DNSDirectTag, OutboundDirectFragmentTag)
+	// Also detour-less, for the same reason — but by a different route: this
+	// one's target, `direct-fragment §hide§`, only BECAME an empty direct
+	// outbound during the sing-box 1.14 bump. 1.14 removed TLSFragment from
+	// DialerOptions (fragmentation is now a TLS option and a route rule action),
+	// so builder.go's TLSFragment{Enabled: true, ...} block had to go, and what
+	// remained had no dial options at all.
+	//
+	// This server still fragments. The "#fragment=300" in its URL sets
+	// fragmentation on the DNS server's own TLS options, which is independent of
+	// the dialer and survives untouched — the golden pins it as
+	// tls.fragment=true, fragment_fallback_delay=300ms. What was lost is the
+	// dialer-level fragmentation the `direct-fragment §hide§` outbound applied to
+	// anything routed THROUGH it, and its only users were this detour and WARP
+	// (removed). No live consumer, so this is recorded, not repaired.
+	trick_dns, err := getDNSServerOptions(DNSTricksDirectTag, "https://dns.cloudflare.com/dns-query#fragment=300", DNSDirectTag, direct_detour)
 	if err != nil {
 		return err
 	}
