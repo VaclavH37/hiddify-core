@@ -183,6 +183,10 @@
       "type": "selector"
     },
     {
+      "tag": "balance",
+      "type": "balancer"
+    },
+    {
       "tag": "lowest",
       "type": "urltest"
     },
