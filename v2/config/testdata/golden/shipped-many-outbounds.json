@@ -1,0 +1,399 @@
+{
+  "dns": {
+    "final": "dns-remote",
+    "independent_cache": true,
+    "rules": [
+      {
+        "domain": "api.cloudflareclient.com",
+        "rewrite_ttl": 86400,
+        "server": "dns-remote-no-warp",
+        "strategy": "ipv4_only"
+      },
+      {
+        "bypass_if_failed": true,
+        "domain": [
+          "api.cloudflareclient.com",
+          "captive.apple.com",
+          "cp.cloudflare.com"
+        ],
+        "rewrite_ttl": 86400,
+        "server": "dns-cn-direct",
+        "strategy": "ipv4_only"
+      },
+      {
+        "action": "predefined",
+        "rcode": "NXDOMAIN",
+        "rule_set": [
+          "block-ads",
+          "block-malware",
+          "block-phishing",
+          "block-cryptominers"
+        ]
+      },
+      {
+        "domain_suffix": [
+          "gstatic.com",
+          "googleapis.com",
+          "googleusercontent.com",
+          "googlevideo.com",
+          "googletagmanager.com",
+          "google-analytics.com",
+          "ggpht.com",
+          "ytimg.com",
+          "pki.goog",
+          "l.google.com"
+        ],
+        "rewrite_ttl": 3600,
+        "server": "dns-remote",
+        "strategy": "ipv4_only"
+      },
+      {
+        "bypass_if_failed": true,
+        "rewrite_ttl": 86400,
+        "rule_set": [
+          "direct-private",
+          "direct-apple",
+          "direct-regional-sites"
+        ],
+        "server": "dns-cn-direct",
+        "strategy": "ipv4_only"
+      },
+      {
+        "bypass_if_failed": true,
+        "rewrite_ttl": 86400,
+        "rule_set": [
+          "direct-private",
+          "direct-apple",
+          "direct-regional-sites"
+        ],
+        "server": "dns-cn-direct-fallback",
+        "strategy": "ipv4_only"
+      },
+      {
+        "bypass_if_failed": true,
+        "domain_suffix": ".cn",
+        "rewrite_ttl": 86400,
+        "server": "dns-cn-direct",
+        "strategy": "ipv4_only"
+      },
+      {
+        "bypass_if_failed": true,
+        "domain_suffix": ".cn",
+        "rewrite_ttl": 86400,
+        "server": "dns-cn-direct-fallback",
+        "strategy": "ipv4_only"
+      },
+      {
+        "action": "predefined",
+        "query_type": [
+          "HTTPS",
+          "SVCB"
+        ],
+        "rcode": "NOERROR"
+      },
+      {
+        "rewrite_ttl": 3600,
+        "server": "dns-remote",
+        "strategy": "ipv4_only"
+      }
+    ],
+    "servers": [
+      {
+        "tag": "dns-static",
+        "type": "hosts"
+      },
+      {
+        "tag": "dns-remote",
+        "type": "https"
+      },
+      {
+        "tag": "dns-remote-fallback",
+        "type": "https"
+      },
+      {
+        "tag": "dns-trick-direct",
+        "type": "https"
+      },
+      {
+        "tag": "dns-direct",
+        "type": "https"
+      },
+      {
+        "tag": "dns-cn-direct",
+        "type": "https"
+      },
+      {
+        "tag": "dns-cn-direct-fallback",
+        "type": "https"
+      },
+      {
+        "tag": "dns-local",
+        "type": "local"
+      },
+      {
+        "tag": "dns-remote-no-warp",
+        "type": "https"
+      }
+    ]
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "data/clash.db",
+      "store_rdrc": true,
+      "store_warp_config": true
+    },
+    "clash_api": {
+      "external_controller": "127.0.0.1:16756",
+      "secret": "\u003credacted\u003e"
+    },
+    "monitoring": {
+      "debounce_window": "500ms",
+      "idle_timeout": "1h30m0s",
+      "interval": "30m0s",
+      "urls": [
+        "https://cp.cloudflare.com",
+        "https://1.1.1.1",
+        "https://captive.apple.com/hotspot-detect.html"
+      ]
+    },
+    "unified_delay": {
+      "enabled": true
+    }
+  },
+  "inbounds": [
+    {
+      "tag": "tun-in",
+      "type": "tun"
+    },
+    {
+      "tag": "mixed-in::1",
+      "type": "mixed"
+    },
+    {
+      "tag": "tproxy-in::1",
+      "type": "tproxy"
+    },
+    {
+      "tag": "redirect-in::1",
+      "type": "redirect"
+    },
+    {
+      "tag": "mixed-in127.0.0.1",
+      "type": "mixed"
+    },
+    {
+      "tag": "tproxy-in127.0.0.1",
+      "type": "tproxy"
+    },
+    {
+      "tag": "redirect-in127.0.0.1",
+      "type": "redirect"
+    }
+  ],
+  "log": {
+    "level": "warn"
+  },
+  "outbounds": [
+    {
+      "tag": "select",
+      "type": "selector"
+    },
+    {
+      "tag": "balance",
+      "type": "balancer"
+    },
+    {
+      "tag": "lowest",
+      "type": "urltest"
+    },
+    {
+      "tag": "node-a",
+      "type": "direct"
+    },
+    {
+      "tag": "node-b",
+      "type": "direct"
+    },
+    {
+      "tag": "node-c",
+      "type": "direct"
+    },
+    {
+      "tag": "node-d",
+      "type": "direct"
+    },
+    {
+      "tag": "node-e",
+      "type": "direct"
+    },
+    {
+      "tag": "node-f",
+      "type": "direct"
+    },
+    {
+      "tag": "node-g",
+      "type": "direct"
+    },
+    {
+      "tag": "node-h",
+      "type": "direct"
+    },
+    {
+      "tag": "node-i",
+      "type": "direct"
+    },
+    {
+      "tag": "node-j",
+      "type": "direct"
+    },
+    {
+      "tag": "node-k",
+      "type": "direct"
+    },
+    {
+      "tag": "node-l",
+      "type": "direct"
+    },
+    {
+      "tag": "direct §hide§",
+      "type": "direct"
+    },
+    {
+      "tag": "direct-fragment §hide§",
+      "type": "direct"
+    }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "dns-cn-direct",
+      "strategy": "ipv4_only"
+    },
+    "final": "select",
+    "rule_set": [
+      {
+        "path": "rulesets/block-ads.srs",
+        "tag": "block-ads",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/block-malware.srs",
+        "tag": "block-malware",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/block-phishing.srs",
+        "tag": "block-phishing",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/block-cryptominers.srs",
+        "tag": "block-cryptominers",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/block-malware-ips.srs",
+        "tag": "block-malware-ips",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/block-phishing-ips.srs",
+        "tag": "block-phishing-ips",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/direct-private.srs",
+        "tag": "direct-private",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/direct-apple.srs",
+        "tag": "direct-apple",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/direct-regional-sites.srs",
+        "tag": "direct-regional-sites",
+        "type": "local"
+      },
+      {
+        "path": "rulesets/direct-regional-ips.srs",
+        "tag": "direct-regional-ips",
+        "type": "local"
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff",
+        "sniffer": [
+          "tls",
+          "http",
+          "dns",
+          "stun"
+        ]
+      },
+      {
+        "action": "hijack-dns",
+        "protocol": "dns"
+      },
+      {
+        "action": "reject",
+        "rule_set": [
+          "block-ads",
+          "block-malware",
+          "block-phishing",
+          "block-cryptominers",
+          "block-malware-ips",
+          "block-phishing-ips"
+        ]
+      },
+      {
+        "mode": "and",
+        "outbound": "direct §hide§",
+        "rules": [
+          {
+            "rule_set": [
+              "direct-private",
+              "direct-apple",
+              "direct-regional-sites",
+              "direct-regional-ips"
+            ]
+          },
+          {
+            "domain_suffix": [
+              "gstatic.com",
+              "googleapis.com",
+              "googleusercontent.com",
+              "googlevideo.com",
+              "googletagmanager.com",
+              "google-analytics.com",
+              "ggpht.com",
+              "ytimg.com",
+              "pki.goog",
+              "l.google.com"
+            ],
+            "invert": true
+          }
+        ],
+        "type": "logical"
+      },
+      {
+        "domain_suffix": ".cn",
+        "outbound": "direct §hide§"
+      },
+      {
+        "action": "resolve",
+        "rewrite_ttl": 3600,
+        "server": "dns-remote",
+        "strategy": "ipv4_only"
+      },
+      {
+        "action": "reject",
+        "network": "udp",
+        "no_drop": true,
+        "port": 443
+      }
+    ]
+  }
+}

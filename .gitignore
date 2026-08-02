@@ -19,3 +19,9 @@ data
 node_modules
 *.db
 *.json
+
+# Golden sing-box configs. These MUST be tracked -- they are the reference the
+# config tests compare against, so a fresh clone without them fails with
+# "reading golden: no such file". The blanket *.json above (aimed at built
+# configs and scratch files) would otherwise swallow them silently.
+!v2/config/testdata/golden/*.json
