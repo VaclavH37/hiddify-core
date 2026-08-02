@@ -126,6 +126,11 @@ func setDns(options *option.Options, opt *HiddifyOptions, staticIps *map[string]
 	dnsOptions := option.DNSOptions{
 		RawDNSOptions: option.RawDNSOptions{
 			DNSClientOptions: option.DNSClientOptions{
+				// Global replacement for the per-rule `strategy` that sing-box 1.14
+				// deprecated on DNS rule ACTIONS. Every rule here carried the same
+				// value, so hoisting it is an exact translation -- see the comment
+				// above dnsRules in builder.go for why it had to move at all.
+				Strategy:         opt.DirectDnsDomainStrategy,
 				IndependentCache: opt.IndependentDNSCache && !C.IsIos,
 				// Expiry MUST stay on. While FakeIP was enabled the cached entries
 				// were synthetic so pinning them was harmless; now that real CDN
@@ -261,7 +266,6 @@ func addForceDirect(options *option.Options, hopt *HiddifyOptions) ([]option.Def
 				Action: C.RuleActionTypeRoute,
 				RouteOptions: option.DNSRouteActionOptions{
 					Server:         DNSRemoteNoWarpTag,
-					Strategy:       hopt.DirectDnsDomainStrategy,
 					BypassIfFailed: false,
 					RewriteTTL:     &DEFAULT_DNS_TTL,
 				},
@@ -301,8 +305,7 @@ func addForceDirect(options *option.Options, hopt *HiddifyOptions) ([]option.Def
 					Action: C.RuleActionTypeRoute,
 					RouteOptions: option.DNSRouteActionOptions{
 						Server:         DNSCNDirectTag,
-						Strategy:       hopt.DirectDnsDomainStrategy,
-						RewriteTTL:     &DEFAULT_DNS_TTL,
+							RewriteTTL:     &DEFAULT_DNS_TTL,
 						BypassIfFailed: true,
 					},
 				},

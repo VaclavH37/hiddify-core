@@ -1024,7 +1024,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
 				Server:         DNSMultiRemoteTag,
-				Strategy:       hopt.RemoteDnsDomainStrategy,
 				RewriteTTL:     &REMOTE_DNS_TTL,
 				BypassIfFailed: false,
 			},
@@ -1045,7 +1044,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
 				Server:         DNSCNDirectTag,
-				Strategy:       hopt.DirectDnsDomainStrategy,
 				RewriteTTL:     &DEFAULT_DNS_TTL,
 				BypassIfFailed: true,
 			},
@@ -1057,7 +1055,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
 				Server:         DNSCNDirectTagFallback,
-				Strategy:       hopt.DirectDnsDomainStrategy,
 				RewriteTTL:     &DEFAULT_DNS_TTL,
 				BypassIfFailed: true,
 			},
@@ -1112,8 +1109,7 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 				Action: C.RuleActionTypeRoute,
 				RouteOptions: option.DNSRouteActionOptions{
 					Server:         DNSCNDirectTag,
-					Strategy:       hopt.DirectDnsDomainStrategy,
-					RewriteTTL:     &DEFAULT_DNS_TTL,
+						RewriteTTL:     &DEFAULT_DNS_TTL,
 					BypassIfFailed: true,
 				},
 			},
@@ -1128,8 +1124,7 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 				Action: C.RuleActionTypeRoute,
 				RouteOptions: option.DNSRouteActionOptions{
 					Server:         DNSCNDirectTagFallback,
-					Strategy:       hopt.DirectDnsDomainStrategy,
-					RewriteTTL:     &DEFAULT_DNS_TTL,
+						RewriteTTL:     &DEFAULT_DNS_TTL,
 					BypassIfFailed: true,
 				},
 			},
@@ -1226,7 +1221,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 		// DECISION_default_domain_resolver.md).
 		DefaultDomainResolver: &option.DomainResolveOptions{
 			Server:   DNSCNDirectTag,
-			Strategy: hopt.DirectDnsDomainStrategy,
 		},
 		// OverrideAndroidVPN: hopt.EnableTun && C.IsAndroid,
 		RuleSet:     rulesets,
@@ -1272,7 +1266,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			Action: C.RuleActionTypeRoute,
 			RouteOptions: option.DNSRouteActionOptions{
 				Server:   DNSMultiRemoteTag,
-				Strategy: hopt.RemoteDnsDomainStrategy,
 				// Short TTL: this is the remote-resolution catch-all that now
 				// caches real CDN addresses (see REMOTE_DNS_TTL in dns.go).
 				RewriteTTL:     &REMOTE_DNS_TTL,

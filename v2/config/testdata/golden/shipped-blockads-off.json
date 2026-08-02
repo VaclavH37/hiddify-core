@@ -6,8 +6,7 @@
       {
         "domain": "api.cloudflareclient.com",
         "rewrite_ttl": 86400,
-        "server": "dns-remote-no-warp",
-        "strategy": "ipv4_only"
+        "server": "dns-remote-no-warp"
       },
       {
         "bypass_if_failed": true,
@@ -17,8 +16,7 @@
           "cp.cloudflare.com"
         ],
         "rewrite_ttl": 86400,
-        "server": "dns-cn-direct",
-        "strategy": "ipv4_only"
+        "server": "dns-cn-direct"
       },
       {
         "domain_suffix": [
@@ -34,8 +32,7 @@
           "l.google.com"
         ],
         "rewrite_ttl": 3600,
-        "server": "dns-remote",
-        "strategy": "ipv4_only"
+        "server": "dns-remote"
       },
       {
         "bypass_if_failed": true,
@@ -45,8 +42,7 @@
           "direct-apple",
           "direct-regional-sites"
         ],
-        "server": "dns-cn-direct",
-        "strategy": "ipv4_only"
+        "server": "dns-cn-direct"
       },
       {
         "bypass_if_failed": true,
@@ -56,22 +52,19 @@
           "direct-apple",
           "direct-regional-sites"
         ],
-        "server": "dns-cn-direct-fallback",
-        "strategy": "ipv4_only"
+        "server": "dns-cn-direct-fallback"
       },
       {
         "bypass_if_failed": true,
         "domain_suffix": ".cn",
         "rewrite_ttl": 86400,
-        "server": "dns-cn-direct",
-        "strategy": "ipv4_only"
+        "server": "dns-cn-direct"
       },
       {
         "bypass_if_failed": true,
         "domain_suffix": ".cn",
         "rewrite_ttl": 86400,
-        "server": "dns-cn-direct-fallback",
-        "strategy": "ipv4_only"
+        "server": "dns-cn-direct-fallback"
       },
       {
         "action": "predefined",
@@ -83,8 +76,7 @@
       },
       {
         "rewrite_ttl": 3600,
-        "server": "dns-remote",
-        "strategy": "ipv4_only"
+        "server": "dns-remote"
       }
     ],
     "servers": [
@@ -124,7 +116,8 @@
         "tag": "dns-remote-no-warp",
         "type": "https"
       }
-    ]
+    ],
+    "strategy": "ipv4_only"
   },
   "experimental": {
     "cache_file": {
@@ -216,10 +209,7 @@
   ],
   "route": {
     "auto_detect_interface": true,
-    "default_domain_resolver": {
-      "server": "dns-cn-direct",
-      "strategy": "ipv4_only"
-    },
+    "default_domain_resolver": "dns-cn-direct",
     "final": "select",
     "rule_set": [
       {
