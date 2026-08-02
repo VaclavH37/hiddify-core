@@ -217,7 +217,19 @@ func (h *HiddifyInstance) SelectOutbound(in *SelectOutboundRequest) (*hcommon.Re
 	// 	Message: "",
 	// }, nil
 	Log(LogLevel_DEBUG, LogType_CORE, "select outbound: ", in.GroupTag, " -> ", in.OutboundTag)
-	if box := h.Box(); box != nil {
+	// A nil box used to fall straight through to the ResponseCode_OK below,
+	// reporting success for a selection that never happened. The Flutter side
+	// only inspects the code, so the app would show the new node as selected
+	// while the core carried on with the old one — indistinguishable from a real
+	// success, and silent in every log.
+	box := h.Box()
+	if box == nil {
+		return &hcommon.Response{
+			Code:    hcommon.ResponseCode_FAILED,
+			Message: "core is not running",
+		}, E.New("select outbound: core is not running")
+	}
+	{
 		outboundGroup, isLoaded := box.Outbound().Outbound(in.GroupTag)
 		if !isLoaded {
 			return &hcommon.Response{
@@ -240,9 +252,43 @@ func (h *HiddifyInstance) SelectOutbound(in *SelectOutboundRequest) (*hcommon.Re
 		}
 		Log(LogLevel_DEBUG, LogType_CORE, "Trying to ping outbound: ", in.OutboundTag)
 
-		// if urltesHistory := h.UrlTestHistory(); urltesHistory != nil {
-		// 	urltesHistory.Observer().Emit(2)
-		// }
+		// Tell the monitoring subsystem the group changed, so anything streaming
+		// group state re-reads it.
+		//
+		// This replaces `urltestHistory.Observer().Emit(2)`, which was commented
+		// out here. sing-box 1.14 moved the group stream onto the new
+		// outbound-monitoring broadcaster — AllProxiesInfoStream now subscribes
+		// via monitoring.SubscribeGroup(""), not to the url-test history — so
+		// that emit would no longer reach it even uncommented.
+		//
+		// Monitoring never learns about a manual selection on its own: nothing
+		// inside sing-box calls SignalChange, it exists for embedders. Without
+		// this the selector switches (the core log shows it) but the stream never
+		// re-emits, so the UI keeps showing the previously active node. That was
+		// the bug: selecting a node while connected appeared to do nothing.
+		// GetAllProxiesInfo reads iGroup.Now(), so one signal carries the new
+		// value; no extra plumbing is needed.
+		//
+		// Signals "" as well as the group tag. The app subscribes to the synthetic
+		// all-outbounds group that monitoring builds in Start(), and
+		// SignalChange(tag) notifies only that one group's channel. Signalling the
+		// OUTBOUND tag instead would not do: when the pick is itself a group
+		// ("lowest"), SignalChange takes its group branch and "" is never told.
+		//
+		// Deliberately off the RPC goroutine. SignalChange does a BLOCKING send on
+		// a capacity-1 channel — unlike monitoring's own internal sends, which use
+		// select/default — so a signal arriving while one is still queued would
+		// stall the caller. Nothing here needs the result.
+		if ctx := h.Context(); ctx != nil {
+			if monitor := monitoring.Get(ctx); monitor != nil {
+				go func(groupTag string) {
+					_ = monitor.SignalChange("")
+					if groupTag != "" {
+						_ = monitor.SignalChange(groupTag)
+					}
+				}(in.GroupTag)
+			}
+		}
 	}
 	return &hcommon.Response{
 		Code:    hcommon.ResponseCode_OK,
