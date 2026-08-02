@@ -453,12 +453,30 @@ func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 				Path:            "data/clash.db",
 			},
 
-			Monitoring: &option.MonitoringOptions{
-				URLs:           hopt.ConnectionTestUrls,
-				Interval:       badoption.Duration(hopt.URLTestInterval.Duration()),
-				DebounceWindow: badoption.Duration(time.Millisecond * 500),
-				IdleTimeout:    badoption.Duration(hopt.URLTestInterval.Duration().Nanoseconds() * 3),
-			},
+			// DIAGNOSTIC — TEMPORARY, REVERT ME.
+			//
+			// Bisecting the "tunnel starts then immediately dies" regression on the
+			// sing-box 1.14 bump. The failing run loops this block forever:
+			//
+			//     monitoring: starting outbound monitoring initialize
+			//     monitoring: registered 4 outbounds for monitoring
+			//     monitoring: registered 2 outbound groups for monitoring
+			//     network: updated default interface Wi-Fi, index 6
+			//
+			// which is this subsystem re-initialising, and its implementation lives
+			// inside the 396 bumped commits. Omitting the block entirely tests
+			// whether it is the cause. If the tunnel comes up without it, the fault
+			// is here and the fix is a real one (re-tune or gate the options); if it
+			// still dies, monitoring is exonerated and the bisect moves on.
+			//
+			// Restore by reverting this commit.
+			//
+			// Monitoring: &option.MonitoringOptions{
+			// 	URLs:           hopt.ConnectionTestUrls,
+			// 	Interval:       badoption.Duration(hopt.URLTestInterval.Duration()),
+			// 	DebounceWindow: badoption.Duration(time.Millisecond * 500),
+			// 	IdleTimeout:    badoption.Duration(hopt.URLTestInterval.Duration().Nanoseconds() * 3),
+			// },
 		}
 	}
 }
