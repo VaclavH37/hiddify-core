@@ -80,38 +80,96 @@
     ],
     "servers": [
       {
+        "predefined": {
+          "dns.alidns.com": [
+            "223.5.5.5",
+            "223.6.6.6"
+          ],
+          "doh.pub": [
+            "1.12.12.12",
+            "120.53.53.53"
+          ]
+        },
         "tag": "dns-static",
         "type": "hosts"
       },
       {
+        "connect_timeout": "5s",
+        "detour": "select",
+        "disable_tcp_keep_alive": true,
+        "server": "1.1.1.1",
         "tag": "dns-remote",
         "type": "udp"
       },
       {
+        "detour": "select",
+        "server": "8.8.8.8",
         "tag": "dns-remote-fallback",
+        "tls": {
+          "enabled": true
+        },
         "type": "https"
       },
       {
+        "domain_resolver": {
+          "server": "dns-direct",
+          "strategy": "prefer_ipv4"
+        },
+        "server": "dns.cloudflare.com",
         "tag": "dns-trick-direct",
+        "tls": {
+          "enabled": true,
+          "fragment": true,
+          "fragment_fallback_delay": "300ms",
+          "record_fragment": true
+        },
         "type": "https"
       },
       {
+        "domain_resolver": {
+          "server": "dns-local",
+          "strategy": "prefer_ipv4"
+        },
+        "server": "dns.alidns.com",
         "tag": "dns-direct",
+        "tls": {
+          "enabled": true
+        },
         "type": "https"
       },
       {
+        "domain_resolver": {
+          "server": "dns-static",
+          "strategy": "prefer_ipv4"
+        },
+        "server": "doh.pub",
         "tag": "dns-cn-direct",
+        "tls": {
+          "enabled": true
+        },
         "type": "https"
       },
       {
+        "domain_resolver": {
+          "server": "dns-static",
+          "strategy": "prefer_ipv4"
+        },
+        "server": "dns.alidns.com",
         "tag": "dns-cn-direct-fallback",
+        "tls": {
+          "enabled": true
+        },
         "type": "https"
       },
       {
+        "prefer_go": true,
         "tag": "dns-local",
         "type": "local"
       },
       {
+        "connect_timeout": "5s",
+        "disable_tcp_keep_alive": true,
+        "server": "1.1.1.1",
         "tag": "dns-remote-no-warp",
         "type": "udp"
       }
@@ -145,34 +203,50 @@
   },
   "inbounds": [
     {
+      "listen": "::1",
+      "listen_port": 12334,
       "tag": "mixed-in::1",
       "type": "mixed"
     },
     {
+      "listen": "::1",
+      "listen_port": 12335,
       "tag": "tproxy-in::1",
       "type": "tproxy"
     },
     {
+      "listen": "::1",
+      "listen_port": 12336,
       "tag": "redirect-in::1",
       "type": "redirect"
     },
     {
+      "listen": "::1",
+      "listen_port": 12337,
       "tag": "dns-in::1",
       "type": "direct"
     },
     {
+      "listen": "127.0.0.1",
+      "listen_port": 12334,
       "tag": "mixed-in127.0.0.1",
       "type": "mixed"
     },
     {
+      "listen": "127.0.0.1",
+      "listen_port": 12335,
       "tag": "tproxy-in127.0.0.1",
       "type": "tproxy"
     },
     {
+      "listen": "127.0.0.1",
+      "listen_port": 12336,
       "tag": "redirect-in127.0.0.1",
       "type": "redirect"
     },
     {
+      "listen": "127.0.0.1",
+      "listen_port": 12337,
       "tag": "dns-in127.0.0.1",
       "type": "direct"
     }
@@ -182,16 +256,43 @@
   },
   "outbounds": [
     {
+      "default": "lowest",
+      "interrupt_exist_connections": true,
+      "outbounds": [
+        "lowest",
+        "balance",
+        "node-a",
+        "node-b"
+      ],
       "tag": "select",
       "type": "selector"
     },
     {
+      "delay_acceptable_ratio": 2,
+      "outbounds": [
+        "node-a",
+        "node-b"
+      ],
+      "strategy": "round-robin",
       "tag": "balance",
       "type": "balancer"
     },
     {
+      "idle_timeout": "30m0s",
+      "interval": "10m0s",
+      "outbounds": [
+        "node-a",
+        "node-b"
+      ],
       "tag": "lowest",
-      "type": "urltest"
+      "tolerance": 100,
+      "type": "urltest",
+      "url": "http://cp.cloudflare.com/",
+      "urls": [
+        "http://cp.cloudflare.com/",
+        "https://1.1.1.1",
+        "https://captive.apple.com/hotspot-detect.html"
+      ]
     },
     {
       "tag": "node-a",

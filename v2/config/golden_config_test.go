@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	dns "github.com/sagernet/sing-dns"
 )
@@ -165,6 +167,11 @@ func outbounds(n int) *option.Options {
 		list = append(list, option.Outbound{
 			Type: "direct",
 			Tag:  "node-" + string(rune('a'+i)),
+			// Non-nil, because sing-box's registry marshaller rejects an
+			// outbound whose Options are nil ("expected json object start, but
+			// starts with nil"). A profile off the wire always carries options,
+			// so a nil here is a fixture artefact, not a shape worth pinning.
+			Options: &option.DirectOutboundOptions{},
 		})
 	}
 	return &option.Options{Outbounds: list}
@@ -255,8 +262,21 @@ func canonicalizeBuild(t *testing.T) ([]byte, error) {
 
 // canonicalize renders a built config as stable, comparable bytes: through
 // encoding/json (which sorts map keys) with volatile values redacted.
+//
+// It MUST marshal through MarshalJSONContext with a registry-bearing context.
+// sing-box resolves the concrete options of every inbound, outbound and DNS
+// server through a registry looked up on the context, so a plain json.Marshal
+// silently reduces each of them to {tag, type} and drops everything else.
+//
+// This was not a theoretical gap. Under plain json.Marshal these goldens pinned
+// the route and DNS *rules* but none of the protocol options — no tun MTU or
+// stack, no DNS server addresses, and no dialer detours. That is precisely the
+// field that broke the tunnel on the sing-box 1.14 bump (dns.go's detour onto an
+// empty direct outbound), and the matrix could not see it: the fixtures stayed
+// byte-identical across the change that broke the client. Marshal without the
+// context and this test quietly stops testing most of the config.
 func canonicalize(o *option.Options) ([]byte, error) {
-	raw, err := json.Marshal(o)
+	raw, err := o.MarshalJSONContext(include.Context(context.Background()))
 	if err != nil {
 		return nil, err
 	}
