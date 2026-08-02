@@ -140,6 +140,16 @@
       "external_controller": "127.0.0.1:16756",
       "secret": "\u003credacted\u003e"
     },
+    "monitoring": {
+      "debounce_window": "500ms",
+      "idle_timeout": "1h30m0s",
+      "interval": "30m0s",
+      "urls": [
+        "https://cp.cloudflare.com",
+        "https://1.1.1.1",
+        "https://captive.apple.com/hotspot-detect.html"
+      ]
+    },
     "unified_delay": {
       "enabled": true
     }
