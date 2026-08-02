@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,6 +75,12 @@ func TestRealProfileBuildsAValidConfig(t *testing.T) {
 			"a config that reduces to zero outbounds, so this is a result, not a setup error")
 	}
 
+	// The core resolves Type:Local rule-set paths against CWD, so mirror the
+	// layout the Dart extractor produces at runtime (<workingDir>/rulesets/*.srs).
+	// Without this, router init fails on a missing block-ads.srs and masks the
+	// real question — same staging as TestBundledRuleSetFilesSatisfyConfig.
+	stageRuleSets(t)
+
 	opts := DefaultHiddifyOptions()
 	shipped(opts)
 
@@ -101,4 +108,41 @@ func TestRealProfileBuildsAValidConfig(t *testing.T) {
 	for _, o := range real {
 		t.Logf("  ok  outbound %-24s type=%s", o.Tag, o.Type)
 	}
+}
+
+// stageRuleSets copies the bundled .srs files into a temp dir laid out the way
+// the Dart extractor produces at runtime, and chdirs there. The core resolves
+// Type:Local rule-set paths against CWD, so without this every config that
+// registers a blocklist fails router init on a missing file — an artefact of the
+// test environment that looks exactly like a real config fault.
+func stageRuleSets(t *testing.T) {
+	t.Helper()
+
+	assets, err := filepath.Abs(filepath.Join("..", "..", "..", "assets", "rulesets"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(assets)
+	if err != nil {
+		t.Skipf("bundled rule-sets not available (%v)", err)
+	}
+
+	work := t.TempDir()
+	dst := filepath.Join(work, "rulesets")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".srs") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(assets, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(work)
 }
