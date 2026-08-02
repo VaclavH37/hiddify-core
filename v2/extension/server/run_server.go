@@ -61,6 +61,22 @@ func runWebserver(grpcServer *grpc.Server) {
 	// Wrapping gRPC server with grpc-web
 	grpcWeb := grpcweb.WrapServer(grpcServer)
 
+	// File server for static files.
+	//
+	// Deliberately its own mux. This used to register on http.DefaultServeMux
+	// (via the package-level http.Handle) and the fallback below served that same
+	// global mux — but the imported sing-box pulls net/http/pprof in
+	// transitively, from three separate packages, and its init() registers
+	// /debug/pprof/* on DefaultServeMux. Any non-grpc-web request would therefore
+	// have resolved against a mux carrying goroutine, heap, profile and trace
+	// dumps, reachable by anyone who could reach :12346.
+	//
+	// Latent rather than live: nothing calls StartExtensionServer, and
+	// cmd/cmd_extension.go imports the top-level extension/server, not this
+	// package. Fixed anyway — the cost is one line and the failure mode is silent.
+	static := http.NewServeMux()
+	static.Handle("/", http.StripPrefix("/", http.FileServer(http.Dir(dir))))
+
 	// HTTP multiplexer
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(resp http.ResponseWriter, req *http.Request) {
@@ -68,13 +84,9 @@ func runWebserver(grpcServer *grpc.Server) {
 		if grpcWeb.IsGrpcWebRequest(req) || grpcWeb.IsAcceptableGrpcCorsRequest(req) {
 			grpcWeb.ServeHTTP(resp, req)
 		} else {
-			http.DefaultServeMux.ServeHTTP(resp, req)
+			static.ServeHTTP(resp, req)
 		}
 	})
-
-	// File server for static files
-	fs := http.FileServer(http.Dir(dir))
-	http.Handle("/", http.StripPrefix("/", fs))
 
 	// HTTP server for grpc-web
 	rpcWebServer := &http.Server{
