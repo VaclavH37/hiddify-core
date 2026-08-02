@@ -350,8 +350,30 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			selectorTags = append([]string{urlTest.Tag}, selectorTags...)
 			defaultSelect = urlTest.Tag
 		} else {
-			outbounds = append([]option.Outbound{balancerOutbound, urlTest}, outbounds...)
-			selectorTags = append([]string{urlTest.Tag, balancerOutbound.Tag}, selectorTags...)
+			// DIAGNOSTIC — TEMPORARY, REVERT ME.
+			//
+			// The `balance` group is omitted to test whether it is what makes the
+			// tunnel start and immediately die on sing-box 1.14. The failing run
+			// loops on:
+			//
+			//     outbound/balancer[balance]: starting load balance, monitoring enabled: true
+			//     monitoring: starting outbound monitoring initialize
+			//     network: updated default interface Wi-Fi, index 6
+			//
+			// 1.14 newly wires outbound monitoring INTO the balancer ("monitoring
+			// enabled: true"), and that pairing is what repeats. Note monitoring
+			// itself is on by DEFAULT in 1.14 — removing the experimental.monitoring
+			// block does not disable it, which is why the earlier diagnostic proved
+			// nothing.
+			//
+			// Safe for a default connect: defaultSelect is urlTest.Tag below, so the
+			// balancer is constructed but unreachable unless the user picks
+			// Auto-Rotate. Omitting it costs only that option, for this experiment.
+			//
+			// Restore by reverting this commit.
+			outbounds = append([]option.Outbound{urlTest}, outbounds...)
+			selectorTags = append([]string{urlTest.Tag}, selectorTags...)
+			_ = balancerOutbound
 			// Default the selector to the lowest-latency group rather than the
 			// round-robin balancer: a stable, fastest exit gives the best
 			// first-connection experience and avoids mid-session IP rotation.
