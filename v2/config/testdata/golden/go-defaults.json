@@ -3,6 +3,22 @@
     "final": "dns-remote",
     "rules": [
       {
+        "action": "reject",
+        "domain": [
+          "api.country.is",
+          "api.ip.sb",
+          "api.my-ip.io",
+          "api.myip.com",
+          "free.freeipapi.com",
+          "ip-api.com",
+          "ipapi.co",
+          "ipinfo.io",
+          "ipwho.is",
+          "myip.expert",
+          "reallyfreegeoip.org"
+        ]
+      },
+      {
         "domain": "api.cloudflareclient.com",
         "rewrite_ttl": 86400,
         "server": "dns-remote-no-warp"

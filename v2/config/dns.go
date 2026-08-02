@@ -3,6 +3,7 @@ package config
 import (
 	"net/netip"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	// dnscode "github.com/miekg/dns"
 	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/hiddify/ipinfo"
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badjson"
@@ -269,6 +271,47 @@ func addForceDirect(options *option.Options, hopt *HiddifyOptions) ([]option.Def
 
 	// // dnsMap[]
 	forceDirectRules := []option.DefaultDNSRule{}
+
+	// Kill sing-box 1.14's IP-geolocation probes at the resolver.
+	//
+	// 1.14's outbound monitoring calls ipinfo.GetIpInfo for every outbound it
+	// tests, which fans out to a dozen third-party endpoints — ip-api.com,
+	// ipapi.co, ipinfo.io, ipwho.is, api.country.is, api.ip.sb, my-ip.io,
+	// api.myip.com, cloudflare.com/cdn-cgi/trace, freeipapi.com, myip.expert,
+	// reallyfreegeoip.org — one of them over plain HTTP. Each request shows a
+	// third party the exit IP of one of our nodes. Nobody chose this; it arrived
+	// with the engine bump, and it is exactly the kind of ambient outbound call
+	// this product does not make.
+	//
+	// It cannot be switched off: option.MonitoringOptions has no flag for it, and
+	// ipinfo's `providers`/`fallbackProviders` are unexported package vars, so
+	// there is nothing to empty from here. Editing hiddify-sing-box is not an
+	// option — that would mean maintaining a third fork.
+	//
+	// So it is stopped one layer down. Every provider is addressed by hostname
+	// (none uses an IP literal, checked against the full provider list), so
+	// refusing to resolve them makes GetIpInfo fail before a single packet
+	// leaves. Monitoring treats the failure as "no IP info" and carries on: delay
+	// measurement, group health and selection are unaffected. The cost is a
+	// per-cycle WARN in the log, which is a fair price for the probe not
+	// happening.
+	//
+	// GetAllIPCheckerDomainsDomains() covers `providers`. The two fallback-only
+	// hosts are added by hand because that helper does not walk
+	// fallbackProviders — check both lists if this ever looks incomplete.
+	ipCheckerDomains := append([]string{}, ipinfo.GetAllIPCheckerDomainsDomains()...)
+	ipCheckerDomains = append(ipCheckerDomains, "api.myip.com", "api.country.is")
+	slices.Sort(ipCheckerDomains)
+	ipCheckerDomains = slices.Compact(ipCheckerDomains)
+	forceDirectRules = append(forceDirectRules, option.DefaultDNSRule{
+		RawDefaultDNSRule: option.RawDefaultDNSRule{Domain: ipCheckerDomains},
+		DNSRuleAction: option.DNSRuleAction{
+			Action: C.RuleActionTypeReject,
+			RejectOptions: option.RejectActionOptions{
+				Method: C.RuleActionRejectMethodDefault,
+			},
+		},
+	})
 	// if len(dnsMap) > 0 {
 	// 	unique_dns_detours := make(map[string]bool)
 	// 	for _, detour := range dnsMap {
