@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	C "github.com/sagernet/sing-box/constant"
 )
 
 // FakeIP must never appear in a built config.
@@ -35,9 +37,17 @@ func TestNoFakeIP(t *testing.T) {
 				t.Fatalf("BuildConfig: %v", err)
 			}
 
-			if built.DNS != nil && built.DNS.FakeIP != nil && built.DNS.FakeIP.Enabled {
-				t.Errorf("dns.fakeip is enabled (EnableFakeDNS=%v); the hub runs "+
-					"domainStrategy:AsIs and needs real addresses", tc.enabled)
+			// Checked as a DNS *server type*, not the old top-level dns.fakeip block.
+			// sing-box removed that block in 1.14 -- option/dns.go now rejects it
+			// outright -- and FakeIP became FakeIPDNSServerOptions, registered like any
+			// other server. The invariant is unchanged; only where it would appear moved.
+			if built.DNS != nil {
+				for _, srv := range built.DNS.Servers {
+					if srv.Type == C.DNSTypeFakeIP {
+						t.Errorf("DNS server %q has type %q (EnableFakeDNS=%v); the hub runs "+
+							"domainStrategy:AsIs and needs real addresses", srv.Tag, srv.Type, tc.enabled)
+					}
+				}
 			}
 
 			// Belt and braces: the typed check above only covers the field we know
