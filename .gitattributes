@@ -1,2 +1,16 @@
 *.h linguist-detectable=false
 *.c linguist-detectable=false
+
+# Golden sing-box configs are compared with bytes.Equal against output the test
+# generates with LF. core.autocrlf=true on a Windows build machine checks them
+# out as CRLF, so every golden assertion would fail on a fresh clone while
+# passing for whoever generated them. Pin to LF.
+v2/config/testdata/golden/*.json text eol=lf
+
+# Deliberately NOT `*.go text eol=lf`. Some upstream Go files are stored CRLF,
+# which inflates their diffs ~40x -- v2/hcore/grpc_server.go reports 296/300 but
+# is 3/7 under --ignore-cr-at-eol -- and makes cherry-picks conflict on whole
+# files. Pinning *.go would not fix those blobs now; it would defer a whole-file
+# rewrite to whenever someone next edits one, landing a 300-line phantom diff in
+# an unrelated commit. merge.renormalize=true handles the cherry-pick side
+# without touching the index. See docs/upstream/METHODOLOGY.md in the app repo.
