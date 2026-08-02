@@ -38,11 +38,38 @@ func Log(level LogLevel, typ LogType, message ...any) {
 	// os.Stderr.WriteString(fmt.Sprintf("%v %v %v\n", level, typ, fmt.Sprint(message...)))
 	// }
 
+	PublishLog(level, typ, fmt.Sprint(message...))
+}
+
+// PublishLog delivers a message to the gRPC log subscribers WITHOUT writing it
+// back into the sing-box logger.
+//
+// Anything reached FROM the sing-box log pipeline must use this rather than Log().
+// Log() calls logLevel(), which writes to the global sing-box logger — the same
+// logger that has LogInterface installed as its PlatformWriter (service.go). So a
+// PlatformWriter that calls Log() hands the message straight back to the logger it
+// just came from, gaining an "H SERVICE " prefix each pass.
+//
+// That loop is self-amplifying rather than merely infinite: every iteration
+// re-wraps the whole previous line, so line length grows linearly and the file
+// grows quadratically. Observed at 16 GB inside a minute, 45 GB shortly after,
+// with the service never finishing startup because the loop starved it.
+//
+// Latent since long before the sing-box 1.14 bump — it needed some component to
+// log through the platform writer during startup, which 1.14's outbound
+// monitoring does and 1.13 did not. The `level < static.logLevel` guard in Log()
+// hid it in release builds, where the level is `warn` and the INFO/DEBUG messages
+// that seed the loop are dropped; a debug build forces the level down and lets it
+// run.
+func PublishLog(level LogLevel, typ LogType, message string) {
+	if level < static.logLevel {
+		return
+	}
 	static.logObserver.Publish(&LogMessage{
 		Level:   level,
 		Type:    typ,
 		Time:    timestamppb.New(time.Now()),
-		Message: fmt.Sprint(message...),
+		Message: message,
 	})
 }
 

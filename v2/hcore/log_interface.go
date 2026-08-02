@@ -43,7 +43,12 @@ func (h *LogInterface) WriteDebugMessage(message string) {
 	h.WriteMessage(log.LevelDebug, message)
 }
 func (h *LogInterface) WriteMessage(level log.Level, message string) {
-	Log(convertLogLevel(level), LogType_SERVICE, message)
+	// PublishLog, NOT Log. This runs inside the sing-box log pipeline, and Log()
+	// writes back into the global sing-box logger that this PlatformWriter is
+	// attached to — so calling it here echoes every message back to itself with
+	// another "H SERVICE " prefix, growing the log file quadratically until the
+	// disk fills. See PublishLog in logproto.go.
+	PublishLog(convertLogLevel(level), LogType_SERVICE, message)
 }
 func convertLogLevel(level log.Level) LogLevel {
 	switch level {
