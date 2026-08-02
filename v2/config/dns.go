@@ -3,6 +3,7 @@ package config
 import (
 	"net/netip"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -281,6 +282,12 @@ func addForceDirect(options *option.Options, hopt *HiddifyOptions) ([]option.Def
 	for domain := range dnsMap {
 		domains = append(domains, domain)
 	}
+	// Go randomizes map iteration, so without this the rule's Domain list comes
+	// out in a different order on every build and the generated config is not
+	// reproducible. Routing is unaffected — a Domain list is a match set — but
+	// non-reproducibility makes "did this change alter the config?" unanswerable,
+	// which is the question the golden tests exist to answer.
+	sort.Strings(domains)
 	if len(domains) > 0 {
 		// Connection-test URLs + cloudflareclient bootstrap. Resolve via the
 		// CN-reachable DoH so URLTest probes don't trip over poisoned 1.1.1.1
