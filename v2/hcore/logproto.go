@@ -9,22 +9,46 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func logLevel(level LogLevel, msg string) {
+// consoleLogger is sing-box's process-wide std logger as it exists before any
+// box has been built — the one log/export.go's init() points at os.Stderr.
+//
+// It is captured because sing-box 1.14 takes the global logger away from us:
+// daemon/instance.go calls log.SetStdLogger(boxInstance.LogFactory().Logger())
+// whenever it builds an instance, permanently repointing the package-level
+// log.Debug/Info/... at the running box's log factory. Since logLevel() below
+// emits through exactly those functions, every "H CORE ..." message stops
+// reaching the terminal the moment the core starts and lands in box.log instead.
+// Symptom: a debug run prints the startup lines, then goes silent on connect.
+//
+// Mirroring to this captured logger restores the pre-1.14 console behaviour
+// without giving up the box.log copy. It cannot feed the log-recursion loop that
+// PublishLog exists to prevent: this factory is the default stderr one and has
+// no PlatformWriter attached, so nothing written here comes back round through
+// LogInterface.
+var consoleLogger = log.StdLogger()
+
+func emit(l log.ContextLogger, level LogLevel, msg string) {
 	switch level {
-	case LogLevel_FATAL:
-		log.Error(msg)
+	case LogLevel_FATAL, LogLevel_ERROR:
+		l.Error(msg)
 	case LogLevel_TRACE:
-		log.Trace(msg)
-	case LogLevel_DEBUG:
-		log.Debug(msg)
+		l.Trace(msg)
 	case LogLevel_INFO:
-		log.Info(msg)
+		l.Info(msg)
 	case LogLevel_WARNING:
-		log.Warn(msg)
-	case LogLevel_ERROR:
-		log.Error(msg)
-	default:
-		log.Debug(msg)
+		l.Warn(msg)
+	default: // DEBUG and anything unrecognised
+		l.Debug(msg)
+	}
+}
+
+func logLevel(level LogLevel, msg string) {
+	emit(log.StdLogger(), level, msg)
+
+	// Only once the daemon has swapped the global logger out; before that the
+	// call above already went to the console and mirroring would double-print.
+	if log.StdLogger() != consoleLogger {
+		emit(consoleLogger, level, msg)
 	}
 }
 func Log(level LogLevel, typ LogType, message ...any) {
