@@ -8,8 +8,6 @@ import (
 	"github.com/hiddify/hiddify-core/v2/config"
 	"github.com/hiddify/hiddify-core/v2/db"
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
-	hutils "github.com/hiddify/hiddify-core/v2/hutils"
-	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 )
@@ -160,25 +158,14 @@ func GenerateConfig(ctx context.Context, in *GenerateConfigRequest) (*GenerateCo
 	}, nil
 }
 
-func removeTunnelIfNeeded(options *option.Options) (tuninb *option.TunInboundOptions) {
-	if hutils.TunAllowed() {
-		return nil
-	}
-
-	// Create a new slice to hold the remaining inbounds
-	newInbounds := make([]option.Inbound, 0, len(options.Inbounds))
-
-	for _, inb := range options.Inbounds {
-		if inb.Type == C.TypeTun {
-			if d, ok := inb.Options.(option.TunInboundOptions); ok {
-				tuninb = &d
-			}
-
-		} else {
-			newInbounds = append(newInbounds, inb)
-		}
-	}
-
-	options.Inbounds = newInbounds
-	return tuninb
-}
+// `removeTunnelIfNeeded` was here. It stripped the TUN inbound from a built config
+// when hutils.TunAllowed() was false (non-admin Windows, non-root Linux), returning
+// the removed options so a privileged helper could set the tunnel up out of process.
+// It had no callers anywhere in the tree.
+//
+// Removed rather than wired up, because silently dropping the TUN inbound is exactly
+// the failure this client was hardened against: it leaves the core with nothing
+// claiming the routing table while the UI still reports Connected — the same leak
+// that made `tun` the forced service mode. If the unprivileged-desktop case is ever
+// handled, it must fail loudly or hand off to the tunnel service, not degrade to a
+// bare loopback proxy.

@@ -5,6 +5,9 @@
 *cronet*
 /bin/*
 !/bin/.gitkeep
+# Transient cronet extraction staging dir (see CRONET_STAGE in Makefile). Only
+# exists mid-build, but a failed run can leave it behind.
+/bin.cronet-stage/
 .build
 .idea
 cert

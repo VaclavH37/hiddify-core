@@ -11,6 +11,25 @@ ifeq ($(OS),Windows_NT)
 $(error Not available for Windows! Build the core in WSL — see CORE_BUILD.md)
 endif
 CRONET_GO_VERSION := $(shell cat hiddify-sing-box/.github/CRONET_GO_VERSION)
+
+# Prefer the cronet-go version recorded in go.mod over the bare commit hash in
+# hiddify-sing-box/.github/CRONET_GO_VERSION. Both name the same commit — go.mod's
+# pseudo-version v0.0.0-<date>-dc1cda1fe287 embeds the short form of the pinned
+# hash — but they resolve very differently:
+#
+#   `go run pkg@<40-char-commit>` asks proxy.golang.org to turn a bare commit into
+#   a pseudo-version, which it only does ON DEMAND. The first request for a commit
+#   the proxy has not cached fails outright with "invalid version: unknown
+#   revision" while it fetches in the background; re-running the same command
+#   minutes later succeeds. A pseudo-version is an ordinary module version the
+#   proxy serves directly, so it has no such first-run failure.
+#
+# That intermittency is why extraction is staged below rather than written
+# straight into $(BINDIR). Falls back to the pinned hash if cronet-go is somehow
+# not in the module graph. Deliberately lazy (`=`, not `:=`) so `go list` only
+# runs for targets that actually extract cronet.
+CRONET_GO_MOD_VERSION = $(shell go list -m -f '{{.Version}}' github.com/sagernet/cronet-go 2>/dev/null)
+CRONET_GO_REF = $(or $(CRONET_GO_MOD_VERSION),$(CRONET_GO_VERSION))
 TAGS=with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_grpc,with_awg,tfogo_checklinkname0,with_naive_outbound,with_conntrack
 IOS_ADD_TAGS=with_dhcp,with_low_memory,with_purego
 MACOS_ADD_TAGS=with_dhcp
@@ -35,6 +54,10 @@ GOBUILDLIB=CGO_ENABLED=1 go build -trimpath -ldflags="$(LDFLAGS)" -buildmode=c-s
 GOBUILDSRV=CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -trimpath -tags $(ALL_TAGS)
 
 CRONET_DIR=./cronet
+# Staging dir for cronet extraction. Kept outside $(BINDIR) so `rm -rf $(BINDIR)/*`
+# cannot clear it, and so a failed extraction never leaves a half-written
+# libcronet.dll where the build would pick it up.
+CRONET_STAGE=$(BINDIR).cronet-stage
 .PHONY: protos
 protos:
 	go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@latest
@@ -93,19 +116,57 @@ webui:
 windows-amd64: LIBNAME := rayn-core
 windows-amd64: CLINAME := RaynVPNCli
 windows-amd64: prepare
+	# Extract cronet into a staging dir BEFORE clearing $(BINDIR), and retry: the
+	# fetch is the one step here that fails intermittently (see CRONET_GO_REF
+	# above). Clearing bin/ first meant a single transient failure deleted the
+	# previously extracted libcronet.dll and put nothing back — and because the
+	# failure happened inside `go run`, whose status was not checked, make still
+	# exited 0 and the missing DLL only surfaced later in the Flutter/CMake build.
+	rm -rf $(CRONET_STAGE)
+	mkdir -p $(CRONET_STAGE)
+	for i in 1 2 3; do \
+		go run -v "github.com/sagernet/cronet-go/cmd/build-naive@$(CRONET_GO_REF)" extract-lib --target windows/amd64 -o $(CRONET_STAGE)/ && break; \
+		if [ $$i -eq 3 ]; then \
+			echo "Error: cronet extract-lib failed after 3 attempts ($(CRONET_GO_REF))"; \
+			rm -rf $(CRONET_STAGE); \
+			exit 1; \
+		fi; \
+		echo "cronet extract-lib attempt $$i failed, retrying in 10s..."; \
+		sleep 10; \
+	done
+	if [ ! -f $(CRONET_STAGE)/libcronet.dll ]; then \
+		echo "Error: cronet extract-lib reported success but produced no libcronet.dll"; \
+		rm -rf $(CRONET_STAGE); \
+		exit 1; \
+	fi
 	rm -rf $(BINDIR)/*
-	go run -v "github.com/sagernet/cronet-go/cmd/build-naive@$(CRONET_GO_VERSION)" extract-lib --target windows/amd64 -o $(BINDIR)/
+	mv $(CRONET_STAGE)/* $(BINDIR)/
+	rm -rf $(CRONET_STAGE)
 	env GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc  $(GOBUILDLIB) -tags $(ALL_TAGS),$(WINDOWS_ADD_TAGS)   -o $(BINDIR)/$(LIBNAME).dll ./platform/desktop
 	echo "core built, now building cli" 
 	ls -R $(BINDIR)/
 	go install -mod=readonly github.com/akavel/rsrc@latest ||echo "rsrc error in installation"
-	go run ./cli tunnel exit
+	# A `go run ./cli tunnel exit` used to sit here, to stop a running tunnel service
+	# so it could not hold rayn-core.dll open across the copy + link below. Removed:
+	# `cli/` was deleted upstream in 0d94b2c ("refactor cmd") — the entrypoints are
+	# `cmd/main` and `cmd/bydll` now — so the line had been failing with
+	# "stat .../cli: directory not found" on every Windows build since, surviving
+	# only because .ONESHELL without `set -e` ignores mid-recipe failures.
+	#
+	# Not repointed at ./cmd/main, because it would still be pointless: this target
+	# only runs on Linux/WSL (the guard at the top of this file hard-errors on
+	# Windows), and ExitTunnelService signals a Windows service that does not exist
+	# on the build host. The DLL-lock problem it guarded against cannot occur here.
 	cp $(BINDIR)/$(LIBNAME).dll ./$(LIBNAME).dll
 	$$(go env GOPATH)/bin/rsrc -ico ./assets/rayn-cli.ico -o ./cmd/bydll/cli.syso ||echo "rsrc error in syso"
 	env GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc CGO_LDFLAGS="$(LIBNAME).dll" $(GOBUILDSRV) -o $(BINDIR)/$(CLINAME).exe ./cmd/bydll
 	rm ./*.dll
-	if [ ! -f $(BINDIR)/$(LIBNAME).dll -o ! -f $(BINDIR)/$(CLINAME).exe ]; then \
-		echo "Error: $(LIBNAME).dll or $(CLINAME).exe not built"; \
+	# libcronet.dll is checked alongside the two build outputs because CMake
+	# installs it into the Windows bundle (windows/CMakeLists.txt) — it is a shipped
+	# artefact, not an intermediate, and its absence must fail the core build rather
+	# than the Flutter build much later.
+	if [ ! -f $(BINDIR)/$(LIBNAME).dll -o ! -f $(BINDIR)/$(CLINAME).exe -o ! -f $(BINDIR)/libcronet.dll ]; then \
+		echo "Error: $(LIBNAME).dll, $(CLINAME).exe or libcronet.dll not built"; \
 		exit 1; \
 	fi
 

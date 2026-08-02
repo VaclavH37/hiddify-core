@@ -3,7 +3,6 @@ package hcore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/hiddify/hiddify-core/v2/config"
@@ -162,9 +161,9 @@ func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfo
 		return errorWrapper(MessageType_START_SERVICE, err)
 	}
 	static.StartedService = instance
-	if static.debug {
-		dumpGoroutinesToFile(fmt.Sprint(sWorkingPath, "/data/goroutine-start.log"))
-	}
+	// Compiled out unless built with -tags raynconfigdump; no longer gated on
+	// static.debug, which a user of a shipped build could set from Settings.
+	dumpGoroutines(sWorkingPath, "goroutine-start.log")
 	for inb := range options.Inbounds {
 		if opts, ok := options.Inbounds[inb].Options.(option.SocksInboundOptions); ok {
 			static.ListenPort = opts.ListenPort

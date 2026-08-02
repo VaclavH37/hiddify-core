@@ -10,10 +10,8 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"net/http"
 
 	"net"
-	_ "net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
@@ -42,11 +40,9 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 		Log(LogLevel_FATAL, LogType_CORE, err.Error())
 		<-time.After(5 * time.Second)
 	})
-	if params.Debug {
-		go func() {
-			http.ListenAndServe("localhost:6060", nil)
-		}()
-	}
+	// Compiled out unless built with -tags raynconfigdump. This served the full Go
+	// pprof suite on localhost:6060 whenever the (user-settable) debug flag was on.
+	startDebugHTTPServer(params.Debug)
 	mu.Lock()
 	defer mu.Unlock()
 	if grpcServer[params.Mode] != nil {

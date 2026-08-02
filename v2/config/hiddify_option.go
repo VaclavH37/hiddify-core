@@ -7,19 +7,20 @@ import (
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/group/balancer"
 	dns "github.com/sagernet/sing-dns"
 )
 
 type HiddifyOptions struct {
-	EnableFullConfig        bool   `json:"enable-full-config,omitempty" overridable:"true"`
-	LogLevel                string `json:"log-level,omitempty"`
-	LogFile                 string `json:"log-file,omitempty"`
-	EnableClashApi          bool   `json:"enable-clash-api,omitempty"`
-	ClashApiPort            uint16 `json:"clash-api-port,omitempty"`
-	ClashApiSecret          string `json:"web-secret,omitempty"`
-	Region                  string `json:"region,omitempty"`
-	BlockAds                bool   `json:"block-ads,omitempty" overridable:"true"`
-	BalancerStrategy        string `json:"balancer-strategy,omitempty" overridable:"true"`
+	EnableFullConfig bool   `json:"enable-full-config,omitempty" overridable:"true"`
+	LogLevel         string `json:"log-level,omitempty"`
+	LogFile          string `json:"log-file,omitempty"`
+	EnableClashApi   bool   `json:"enable-clash-api,omitempty"`
+	ClashApiPort     uint16 `json:"clash-api-port,omitempty"`
+	ClashApiSecret   string `json:"web-secret,omitempty"`
+	Region           string `json:"region,omitempty"`
+	BlockAds         bool   `json:"block-ads,omitempty" overridable:"true"`
+	BalancerStrategy string `json:"balancer-strategy,omitempty" overridable:"true"`
 	// GeoIPPath        string      `json:"geoip-path"`
 	// GeoSitePath      string      `json:"geosite-path"`
 	Rules     []Rule      `json:"rules,omitempty" overridable:"true"`
@@ -27,7 +28,11 @@ type HiddifyOptions struct {
 	Warp2     WarpOptions `json:"warp2,omitempty"`
 	Mux       MuxOptions  `json:"mux,omitempty" overridable:"true"`
 	TLSTricks TLSTricks   `json:"tls-tricks,omitempty"`
-	EnableNTP bool        `json:"enable-ntp,omitempty"`
+	// `EnableNTP` was here. Nothing ever read it — the NTP wiring in builder.go
+	// hardcoded Enabled: true and was itself never called. Removed with that wiring;
+	// see the note in BuildConfig for what NTP was for and what re-adding it needs.
+	// No client sends `enable-ntp`, and encoding/json ignores unknown keys, so an
+	// older caller that does is harmless.
 
 	DNSOptions
 	InboundOptions
@@ -70,20 +75,27 @@ type URLTestOptions struct {
 }
 
 type RouteOptions struct {
-	ResolveDestination     bool                  `json:"resolve-destination,omitempty"`
+	// `ResolveDestination` was removed for the same reason as IPv6Mode below: it was
+	// declared, defaulted, serialised and shipped over gRPC, and read by nothing —
+	// builder.go had no use site for it in either position. Worse, the behaviour its
+	// name promised is unconditional: BuildConfig always appends a `resolve` route
+	// action for tunnel-bound traffic, because the hub runs domainStrategy:AsIs and
+	// needs real IPs. So the OFF position (the default) misdescribed what the core
+	// did, and the ON position changed nothing.
+	//
 	// IPv6Mode was removed: it was serialised, shipped over gRPC and persisted,
 	// yet read nowhere — both use sites in builder.go (setInbound's domain
 	// strategy and the tun address switch) are commented out upstream. The tun's
 	// IPv6 address is decided by isIPv6Supported(), a host probe. The client no
 	// longer sends `ipv6-mode`; an older client that still does is harmless,
 	// since encoding/json ignores unknown fields.
-	BypassLAN              bool                  `json:"bypass-lan,omitempty"`
-	AllowConnectionFromLAN bool                  `json:"allow-connection-from-lan,omitempty"`
+	BypassLAN              bool `json:"bypass-lan,omitempty"`
+	AllowConnectionFromLAN bool `json:"allow-connection-from-lan,omitempty"`
 	// BlockQuic suppresses tunnelled HTTP/3: rejects UDP/443 that reaches the tunnel and
 	// NODATA-answers HTTPS/SVCB DNS queries so clients don't discover h3. Overridable so the
 	// backend can revert per-subscription without a client rebuild. Only affects tunnelled
 	// traffic; direct/.cn/private and all non-443 UDP keep their native path.
-	BlockQuic              bool                  `json:"block-quic,omitempty" overridable:"true"`
+	BlockQuic bool `json:"block-quic,omitempty" overridable:"true"`
 }
 
 type TLSTricks struct {
@@ -119,7 +131,15 @@ type WarpOptions struct {
 
 func DefaultHiddifyOptions() *HiddifyOptions {
 	return &HiddifyOptions{
-		EnableNTP: true,
+		// The balancer rejects an empty strategy outright ("unknown load balance
+		// strategy") and that failure surfaces at service start, not config build,
+		// so every caller that did not populate this field died the moment a
+		// profile had more than one outbound. Defaulting it here means only a
+		// caller that deliberately sets something else can get a non-round-robin
+		// balancer. normalizeBalancerStrategy in builder.go is the backstop for
+		// callers that bypass these defaults entirely (options loaded from a file
+		// unmarshal into a zero struct, not over this).
+		BalancerStrategy: balancer.StrategyRoundRobin,
 		DNSOptions: DNSOptions{
 			RemoteDnsAddress:        "1.1.1.1",
 			RemoteDnsDomainStrategy: option.DomainStrategy(dns.DomainStrategyAsIS),
@@ -160,7 +180,6 @@ func DefaultHiddifyOptions() *HiddifyOptions {
 			// URLTestIdleTimeout: DurationInSeconds(6000),
 		},
 		RouteOptions: RouteOptions{
-			ResolveDestination:     false,
 			BypassLAN:              false,
 			AllowConnectionFromLAN: false,
 			BlockQuic:              true,

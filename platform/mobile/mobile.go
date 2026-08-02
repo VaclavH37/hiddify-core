@@ -3,8 +3,19 @@ package mobile
 import (
 	hcore "github.com/hiddify/hiddify-core/v2/hcore"
 
-	_ "net/http/pprof"
-
+	// `_ "net/http/pprof"` was imported here. It started no listener by itself, but
+	// its init() registers /debug/pprof/* on http.DefaultServeMux, so it only ever
+	// mattered in combination with something serving that mux — which is exactly
+	// what hcore.Setup used to do on localhost:6060 whenever the user enabled Debug
+	// mode. That listener is now behind the raynconfigdump build tag, and this
+	// import is dropped so a future http.Serve(DefaultServeMux) cannot silently
+	// re-expose the handlers.
+	//
+	// The symbols remain in the binary regardless: the imported sing-box imports
+	// net/http/pprof itself (debug_http.go, libbox/pprof.go), and that submodule is
+	// not ours to edit. They are inert — nothing in a shipped build serves the mux,
+	// and sing-box's own debug listener needs experimental.debug.listen, which
+	// setExperimental never sets and a profile cannot inject.
 	_ "github.com/sagernet/gomobile"
 	"github.com/sagernet/sing-box/experimental/libbox"
 )

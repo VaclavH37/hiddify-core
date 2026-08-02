@@ -17,6 +17,7 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	sdns "github.com/sagernet/sing-box/dns"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/group/balancer"
 	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/wireguard-go/hiddify"
 )
@@ -90,7 +91,21 @@ func BuildConfig(ctx context.Context, hopts *HiddifyOptions, inputOpt *ReadOptio
 	staticIPs["doh.pub"] = []string{"1.12.12.12", "120.53.53.53"}
 	staticIPs["dns.alidns.com"] = []string{"223.5.5.5", "223.6.6.6"}
 	// staticIPs["api.cloudflareclient.com"] = []string{"104.16.192.82", "2606:4700::6810:1854", getRandomWarpIP()}
-	// setNTP(&options)
+	//
+	// NTP was configured here (a `setNTP` helper pointing at time.apple.com, plus an
+	// `enable-ntp` option). The call was already commented out upstream, so
+	// options.NTP was always nil, and everything downstream of it was unreachable:
+	// the `forceDirectRoute` list could only ever be populated from options.NTP.Server,
+	// so the DNS rule and route rule gated on it never appeared in a built config.
+	// `enable-ntp` was never read at all — setNTP hardcoded Enabled: true. All of it
+	// is gone rather than left looking configurable.
+	//
+	// What it was for: sing-box uses NTP to correct a skewed device clock so TLS
+	// certificate validity checks pass. That protection is currently absent — a device
+	// with a badly wrong clock will fail handshakes. Re-adding it means restoring the
+	// NTP options block AND forcing the time server direct at both the DNS and route
+	// layer, because a clock too wrong for TLS is also too wrong to reach the server
+	// through a TLS-based tunnel.
 	if err := setOutbounds(&options, input, hopts, &staticIPs); err != nil {
 		return nil, err
 	}
@@ -103,17 +118,6 @@ func BuildConfig(ctx context.Context, hopts *HiddifyOptions, inputOpt *ReadOptio
 	}
 
 	return &options, nil
-}
-
-func setNTP(options *option.Options) {
-	options.NTP = &option.NTPOptions{
-		Enabled:       true,
-		ServerOptions: option.ServerOptions{ServerPort: 123, Server: "time.apple.com"},
-		Interval:      badoption.Duration(12 * time.Hour),
-		DialerOptions: option.DialerOptions{
-			Detour: OutboundDirectTag,
-		},
-	}
 }
 
 func getHostnameIfNotIP(inp string) (string, error) {
@@ -134,6 +138,31 @@ func getHostnameIfNotIP(inp string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("not a hostname: %s", inp)
+}
+
+// normalizeBalancerStrategy keeps an unusable strategy string from reaching the
+// balancer, which rejects anything it does not recognise with "unknown load
+// balance strategy" — a service-start failure, not a config-build error, so it
+// surfaces far from its cause and only once a profile has more than one outbound.
+//
+// The empty string was the common case: HiddifyOptions loaded from a file
+// unmarshal into a zero struct rather than over DefaultHiddifyOptions(), so any
+// options JSON omitting "balancer-strategy" produced one.
+//
+// Unknown values fall back rather than erroring because this group is optional —
+// it is only reachable if the user selects Auto-Rotate, and the selector defaults
+// to the url-test group. Refusing to start the whole tunnel over it would trade a
+// degraded optional feature for a total outage.
+func normalizeBalancerStrategy(strategy string) string {
+	switch strategy {
+	case balancer.StrategyRoundRobin,
+		balancer.StrategyConsistentHashing,
+		balancer.StrategyStickySessions,
+		balancer.StrategyLowestDelay:
+		return strategy
+	default:
+		return balancer.StrategyRoundRobin
+	}
 }
 
 func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOptions, staticIPs *map[string][]string) error {
@@ -294,12 +323,12 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		},
 	}
 
-	balancer := option.Outbound{
+	balancerOutbound := option.Outbound{
 		Type: C.TypeBalancer,
 		Tag:  OutboundRoundRobinTag,
 		Options: &option.BalancerOutboundOptions{
 			Outbounds:            tags,
-			Strategy:             opt.BalancerStrategy,
+			Strategy:             normalizeBalancerStrategy(opt.BalancerStrategy),
 			DelayAcceptableRatio: 2,
 			// Round-robin ignores Tolerance (unimplemented in the balancer anyway); the
 			// meaningful change here is not interrupting live connections on re-selection.
@@ -321,8 +350,8 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			selectorTags = append([]string{urlTest.Tag}, selectorTags...)
 			defaultSelect = urlTest.Tag
 		} else {
-			outbounds = append([]option.Outbound{balancer, urlTest}, outbounds...)
-			selectorTags = append([]string{urlTest.Tag, balancer.Tag}, selectorTags...)
+			outbounds = append([]option.Outbound{balancerOutbound, urlTest}, outbounds...)
+			selectorTags = append([]string{urlTest.Tag, balancerOutbound.Tag}, selectorTags...)
 			// Default the selector to the lowest-latency group rather than the
 			// round-robin balancer: a stable, fastest exit gives the best
 			// first-connection experience and avoids mid-session IP rotation.
@@ -443,6 +472,7 @@ func setLog(options *option.Options, opt *HiddifyOptions) {
 		DisableColor: true,
 	}
 }
+
 // isIPv6Supported reports whether the HOST has a usable IPv6 stack. It says
 // nothing about whether the tunnel can carry IPv6 — see tunnelIPv6Enabled.
 func isIPv6Supported() bool {
@@ -781,10 +811,17 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// 	}
 	// 	dnsRules = append(dnsRules, dnsRule)
 	// }
-	forceDirectRoute := make([]string, 0)
-	if options.NTP != nil && options.NTP.Enabled {
-		forceDirectRoute = append(forceDirectRoute, options.NTP.Server)
-	}
+	// A `forceDirectRoute` list used to be built here, then consumed by a DNS rule
+	// (→ dns-direct) and a route rule (→ direct outbound). It was only ever populated
+	// from options.NTP.Server, and NTP is not configured (see BuildConfig), so the
+	// list was always empty and neither rule was ever appended. Both are gone with the
+	// NTP wiring that fed them.
+	//
+	// Note this was the ONLY DNS rule that routed queries to `dns-direct`. That server
+	// is still registered and still needed: it is the domain_resolver for
+	// dns-trick-direct, and for dns-remote whenever `remote-dns-address` is overridden
+	// to a hostname rather than an IP literal. It resolves other resolvers' hostnames;
+	// nothing routes ordinary queries to it.
 
 	// parsedURL, err := url.Parse(opt.ConnectionTestUrl)
 	// if err == nil {
@@ -796,38 +833,6 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	// 	})
 	// }
 
-	if len(forceDirectRoute) > 0 {
-
-		dnsRules = append(dnsRules, option.DefaultDNSRule{
-			RawDefaultDNSRule: option.RawDefaultDNSRule{
-				Domain: forceDirectRoute,
-			},
-			DNSRuleAction: option.DNSRuleAction{
-				Action: C.RuleActionTypeRoute,
-				RouteOptions: option.DNSRouteActionOptions{
-					Server:         DNSMultiDirectTag,
-					Strategy:       hopt.DirectDnsDomainStrategy,
-					RewriteTTL:     &DEFAULT_DNS_TTL,
-					DisableCache:   false,
-					BypassIfFailed: false,
-				},
-			},
-		})
-		routeRules = append(routeRules, option.Rule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultRule{
-				RawDefaultRule: option.RawDefaultRule{
-					Domain: forceDirectRoute,
-				},
-				RuleAction: option.RuleAction{
-					Action: C.RuleActionTypeRoute,
-					RouteOptions: option.RouteActionOptions{
-						Outbound: OutboundDirectTag,
-					},
-				},
-			},
-		})
-	}
 	// NXDOMAIN, not REFUSED: REFUSED reads as "this resolver won't serve you",
 	// so clients treat it as a resolver fault and retry / fail over to their own
 	// DNS (a retry storm on ad-heavy pages). NXDOMAIN is the correct "this name
@@ -839,79 +844,75 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			Rcode: &rejectRCode,
 		},
 	}
+	// Blocklists are BUNDLED, not fetched. These six used to be Type:Remote pulled
+	// from raw.githubusercontent.com/hiddify/hiddify-geo with DownloadDetour:select
+	// — i.e. over the tunnel, on first connect, from a host that is awkward to reach
+	// on a CN cold start. That was the last remote rule-set fetch in the client and
+	// the last runtime dependency on a Hiddify-branded URL. The dependency now lives
+	// at build time only (`make fetch-rulesets`), exactly like the CN sets.
+	//
+	// Bundling costs nothing in memory: a remote rule-set is downloaded, cached and
+	// then compiled into the same matcher structures as a local one. Measured heap
+	// for all six is ~1.75 MiB against a 30 MB Go soft limit on iOS — and it was
+	// already being paid, since block-ads defaults on.
+	//
+	// Registration stays INSIDE this branch rather than joining the unconditional
+	// chinaRulesets: a user who turns the toggle off then pays no memory at all, and
+	// a missing/corrupt .srs cannot stop the core from starting for them. Local
+	// rule-sets are opened at config-load time, so a bad file IS fatal when enabled —
+	// which is why the extractor verifies sha256 against MANIFEST and re-extracts.
+	//
+	// Local file names are neutral (block-*, matching the direct-* convention) so the
+	// asset listing does not advertise the upstream project. Names must stay in sync
+	// across three places: the curl targets in the root Makefile's fetch-rulesets,
+	// the FILES array in scripts/regen_rulesets_manifest.sh, and the Path literals
+	// here. Upstream source -> local name:
+	//   geosite-category-ads-all -> block-ads
+	//   geosite-malware          -> block-malware
+	//   geosite-phishing         -> block-phishing
+	//   geosite-cryptominers     -> block-cryptominers
+	//   geoip-malware            -> block-malware-ips
+	//   geoip-phishing           -> block-phishing-ips
 	if hopt.BlockAds {
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geosite-ads",
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/block/geosite-category-ads-all.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
+		blockRulesets := []option.RuleSet{
+			{
+				Tag: "block-ads", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+				LocalOptions: option.LocalRuleSet{Path: "rulesets/block-ads.srs"},
 			},
-		})
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geosite-malware",
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/block/geosite-malware.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
+			{
+				Tag: "block-malware", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+				LocalOptions: option.LocalRuleSet{Path: "rulesets/block-malware.srs"},
 			},
-		})
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geosite-phishing",
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/block/geosite-phishing.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
+			{
+				Tag: "block-phishing", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+				LocalOptions: option.LocalRuleSet{Path: "rulesets/block-phishing.srs"},
 			},
-		})
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geosite-cryptominers",
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/block/geosite-cryptominers.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
+			{
+				Tag: "block-cryptominers", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+				LocalOptions: option.LocalRuleSet{Path: "rulesets/block-cryptominers.srs"},
 			},
-		})
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geoip-phishing",
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/block/geoip-phishing.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
+			{
+				Tag: "block-malware-ips", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+				LocalOptions: option.LocalRuleSet{Path: "rulesets/block-malware-ips.srs"},
 			},
-		})
-		rulesets = append(rulesets, option.RuleSet{
-			Type:   C.RuleSetTypeRemote,
-			Tag:    "geoip-malware",
-			Format: C.RuleSetFormatBinary,
-			RemoteOptions: option.RemoteRuleSet{
-				URL:            "https://raw.githubusercontent.com/hiddify/hiddify-geo/rule-set/block/geoip-malware.srs",
-				UpdateInterval: badoption.Duration(5 * time.Hour * 24),
-				DownloadDetour: OutboundSelectTag,
+			{
+				Tag: "block-phishing-ips", Type: C.RuleSetTypeLocal, Format: C.RuleSetFormatBinary,
+				LocalOptions: option.LocalRuleSet{Path: "rulesets/block-phishing-ips.srs"},
 			},
-		})
+		}
+		rulesets = append(rulesets, blockRulesets...)
 
 		routeRules = append(routeRules, option.Rule{
 			Type: C.RuleTypeDefault,
 			DefaultOptions: option.DefaultRule{
 				RawDefaultRule: option.RawDefaultRule{
 					RuleSet: []string{
-						"geosite-ads",
-						"geosite-malware",
-						"geosite-phishing",
-						"geosite-cryptominers",
-						"geoip-malware",
-						"geoip-phishing",
+						"block-ads",
+						"block-malware",
+						"block-phishing",
+						"block-cryptominers",
+						"block-malware-ips",
+						"block-phishing-ips",
 					},
 				},
 				RuleAction: option.RuleAction{
@@ -922,14 +923,18 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 				},
 			},
 		})
+		// DOMAIN-only sets here. Including a geoip set in a DNS rule makes sing-box
+		// resolve every query just to get an IP to test against it — the same leak
+		// documented for direct-regional-ips on the China-direct path. The two
+		// block-*-ips sets stay in the route rule above, where a real destination IP
+		// already exists.
 		dnsRules = append(dnsRules, option.DefaultDNSRule{
 			RawDefaultDNSRule: option.RawDefaultDNSRule{
-
 				RuleSet: []string{
-					"geosite-ads",
-					"geosite-malware",
-					"geosite-phishing",
-					"geosite-cryptominers",
+					"block-ads",
+					"block-malware",
+					"block-phishing",
+					"block-cryptominers",
 				},
 			},
 			DNSRuleAction: rejectDnsAction,

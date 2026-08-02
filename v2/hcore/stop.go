@@ -2,7 +2,6 @@ package hcore
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/hiddify/hiddify-core/v2/config"
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
@@ -34,7 +33,10 @@ func Stop() (coreResponse *CoreInfoResponse, err error) {
 
 	if err := ss.CloseService(); err != nil {
 		static.StartedService = nil
-		dumpGoroutinesToFile(fmt.Sprint(sWorkingPath, "/data/goroutine-stop.log"))
+		// Compiled out unless built with -tags raynconfigdump. This one was not
+		// gated at all: a failed CloseService wrote a full goroutine dump in
+		// shipped builds, with no user action required.
+		dumpGoroutines(sWorkingPath, "goroutine-stop.log")
 		return errorWrapper(MessageType_UNEXPECTED_ERROR, err)
 	}
 	// err = common.Close(static.StartedService)

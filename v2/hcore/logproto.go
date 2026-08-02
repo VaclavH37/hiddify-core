@@ -2,8 +2,6 @@ package hcore
 
 import (
 	"fmt"
-	"os"
-	"runtime/pprof"
 	"time"
 
 	"github.com/sagernet/sing-box/log"
@@ -66,12 +64,7 @@ func (s *CoreService) LogListener(req *LogRequest, stream grpc.ServerStreamingSe
 	}
 }
 
-func dumpGoroutinesToFile(path string) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return pprof.Lookup("goroutine").WriteTo(f, 2)
-}
+// `dumpGoroutinesToFile` lived here, called unconditionally from stop.go and
+// behind `static.debug` from start.go. Both call sites now use `dumpGoroutines`
+// in goroutinedump.go, which is compiled out unless built with
+// `-tags raynconfigdump`.
