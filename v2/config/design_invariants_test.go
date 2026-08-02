@@ -107,6 +107,40 @@ func TestExperimentalDebugListenerNeverConfigured(t *testing.T) {
 	}
 }
 
+// V2Ray-format subscription content must NOT parse.
+//
+// Fork commit 9a5601d ("Remove Ray2Sing") deleted the ray2sing.Ray2SingboxOptions
+// branch from parseConfigContent, together with the ray2sing submodule and its
+// go.mod entry. That removal is load-bearing: it took the xray-core code path out
+// of the client, and this fork only ever consumes configs the middleware issues,
+// reached through a rayn://import/<token> subscription URL.
+//
+// Restoring the parser would be an easy-looking way to "fix" the upstream test
+// this replaces (v2/profile/test TestAddByContent, quarantined as K2 in
+// docs/upstream/BASELINE.md) — which is exactly why the intent is pinned here,
+// offline and without the network access that test needs.
+func TestV2RayFormatIsNotParsed(t *testing.T) {
+	// A minimal V2Ray-style subscription body: newline-separated proxy URIs, the
+	// shape ray2sing consumed. No live host is contacted; parsing fails on format
+	// before anything would dial.
+	const v2raySubscription = "vless://11111111-2222-3333-4444-555555555555@example.invalid:443?" +
+		"security=tls&type=ws#node-a\n" +
+		"trojan://password@example.invalid:443#node-b\n"
+
+	opts := DefaultHiddifyOptions()
+	shipped(opts)
+
+	got, err := parseConfigContent(t.Context(), []byte(v2raySubscription), false, opts, false)
+	if err == nil {
+		t.Fatalf("V2Ray-format content parsed successfully (%d outbounds); the "+
+			"ray2sing branch appears to be back. See 9a5601d — removing it took the "+
+			"xray-core path out of this client.", len(got.Outbounds))
+	}
+	if !strings.Contains(err.Error(), "unable to determine config format") {
+		t.Errorf("expected the format-detection failure, got: %v", err)
+	}
+}
+
 // Every rule-set the config references must be a path under rulesets/, which is
 // where the Dart extractor writes the bundled .srs files.
 //

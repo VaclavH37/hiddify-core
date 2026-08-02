@@ -8,7 +8,30 @@ import (
 	"github.com/sagernet/sing-box/experimental/libbox"
 )
 
+// Quarantined by this fork. Upstream test, kept verbatim below so a future
+// upstream change to it still merges cleanly.
+//
+// It fetches a V2Ray-format WARP subscription and expects the parsed title to be
+// "🔥 WARP 🔥". It cannot pass here, for two independent reasons:
+//
+//  1. The V2Ray parser is gone. Fork commit 9a5601d ("Remove Ray2Sing") deleted
+//     the ray2sing.Ray2SingboxOptions branch from v2/config/parser.go, so parsing
+//     falls through to Clash, which cannot read that format. The failure surfaces
+//     as "unable to determine config format" — which is the correct behaviour
+//     here, not a defect. TestV2RayFormatIsNotParsed in v2/config pins that
+//     intent offline.
+//  2. WARP is removed from this fork entirely.
+//
+// It also reaches raw.githubusercontent.com at test time, which makes it unfit
+// for a validation gate regardless of the above.
+//
+// Skipped rather than deleted so that the reason travels with the code: if the
+// V2Ray parser is ever reinstated, this is where the question resurfaces.
+// Recorded as K2 in docs/upstream/BASELINE.md.
 func TestAddByContent(t *testing.T) {
+	t.Skip("upstream test for the V2Ray/ray2sing parser and WARP, both removed " +
+		"from this fork (see 9a5601d); also requires network access")
+
 	ctx := libbox.BaseContext(nil)
 	entity, err := profile.AddByUrl(ctx, "https://raw.githubusercontent.com/hiddify/hiddify-next/refs/heads/main/test.configs/warp", "", false)
 	if err != nil {
