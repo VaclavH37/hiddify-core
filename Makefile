@@ -110,7 +110,7 @@ ios-full: lib_install
 # If you ever need a simulator slice for local debugging, build it as a separate
 # invocation — do not add it here and do not restore the cp.
 ios: lib_install
-	gomobile bind -v  -target ios -libname=hiddify-core -tags=$(ALL_TAGS),$(IOS_ADD_TAGS) -trimpath -ldflags="$(LDFLAGS)" -o $(BINDIR)/HiddifyCore.xcframework github.com/sagernet/sing-box/experimental/libbox ./platform/mobile
+	gomobile bind -v  -target ios -libname=rayn-core -tags=$(ALL_TAGS),$(IOS_ADD_TAGS) -trimpath -ldflags="$(LDFLAGS)" -o $(BINDIR)/RaynCore.xcframework github.com/sagernet/sing-box/experimental/libbox ./platform/mobile
 
 
 webui:
