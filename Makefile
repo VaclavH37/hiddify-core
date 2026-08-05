@@ -94,9 +94,23 @@ ios-full: lib_install
 	mv $(BINDIR)/$(PRODUCT_NAME).xcframework $(BINDIR)/$(LIBNAME).xcframework 
 	cp HiddifyCore.podspec $(BINDIR)/$(LIBNAME).xcframework/
 
+# Device arm64 only — that is what TestFlight and the App Store take, and the VPN
+# Network Extension cannot run in the simulator anyway, so a simulator slice buys
+# nothing for a release build.
+#
+# There used to be a `cp Info.plist $(BINDIR)/HiddifyCore.xcframework/` here. It
+# overwrote the manifest gomobile had just written correctly with the checked-in
+# Info.plist, which declares TWO libraries — `ios-arm64_x86_64-simulator` and
+# `ios-arm64`. That file describes the output of `ios-full` (which is separately
+# broken: it cp's a HiddifyCore.podspec that does not exist), not of this target.
+# `-target ios` produces the device slice alone, so the copied manifest pointed at
+# a simulator framework that was never in the bundle and Xcode refused to resolve
+# it. gomobile's own manifest is correct; leave it alone.
+#
+# If you ever need a simulator slice for local debugging, build it as a separate
+# invocation — do not add it here and do not restore the cp.
 ios: lib_install
 	gomobile bind -v  -target ios -libname=hiddify-core -tags=$(ALL_TAGS),$(IOS_ADD_TAGS) -trimpath -ldflags="$(LDFLAGS)" -o $(BINDIR)/HiddifyCore.xcframework github.com/sagernet/sing-box/experimental/libbox ./platform/mobile
-	cp Info.plist $(BINDIR)/HiddifyCore.xcframework/
 
 
 webui:
