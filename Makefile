@@ -94,21 +94,20 @@ ios-full: lib_install
 	mv $(BINDIR)/$(PRODUCT_NAME).xcframework $(BINDIR)/$(LIBNAME).xcframework 
 	cp HiddifyCore.podspec $(BINDIR)/$(LIBNAME).xcframework/
 
-# Device arm64 only — that is what TestFlight and the App Store take, and the VPN
-# Network Extension cannot run in the simulator anyway, so a simulator slice buys
-# nothing for a release build.
+# `-target ios` in the sagernet gomobile fork emits THREE slices, not one: device
+# arm64, plus iossimulator arm64 and x86_64. A build log shows one compile against
+# iPhoneOS*.sdk and two against iPhoneSimulator*.sdk, and the resulting manifest
+# lists `ios-arm64` and `ios-arm64_x86_64-simulator`. Only the device slice ships —
+# Xcode selects per-slice at build time — and simulator slices inside an xcframework
+# are not an App Store validation problem, so there is nothing to strip.
 #
-# There used to be a `cp Info.plist $(BINDIR)/HiddifyCore.xcframework/` here. It
-# overwrote the manifest gomobile had just written correctly with the checked-in
-# Info.plist, which declares TWO libraries — `ios-arm64_x86_64-simulator` and
-# `ios-arm64`. That file describes the output of `ios-full` (which is separately
-# broken: it cp's a HiddifyCore.podspec that does not exist), not of this target.
-# `-target ios` produces the device slice alone, so the copied manifest pointed at
-# a simulator framework that was never in the bundle and Xcode refused to resolve
-# it. gomobile's own manifest is correct; leave it alone.
-#
-# If you ever need a simulator slice for local debugging, build it as a separate
-# invocation — do not add it here and do not restore the cp.
+# There used to be a `cp Info.plist $(BINDIR)/HiddifyCore.xcframework/` here,
+# overwriting the manifest gomobile generates from what it actually built with a
+# static file checked in years earlier. The two agree today, so the copy was
+# pointless rather than harmful — but it is a latent break: the day gomobile changes
+# how `-target ios` expands, the manifest describes a bundle that no longer exists
+# and Xcode cannot resolve the framework. gomobile's own manifest is always right by
+# construction; leave it alone and do not restore the cp.
 ios: lib_install
 	gomobile bind -v  -target ios -libname=rayn-core -tags=$(ALL_TAGS),$(IOS_ADD_TAGS) -trimpath -ldflags="$(LDFLAGS)" -o $(BINDIR)/RaynCore.xcframework github.com/sagernet/sing-box/experimental/libbox ./platform/mobile
 
