@@ -55,6 +55,13 @@ const (
 	InboundTProxy    = "tproxy-in"
 	InboundRedirect  = "redirect-in"
 	InboundDirectTag = "dns-in"
+
+	// The tun's own addresses. Shared between setInbound, which assigns them,
+	// and the self-loop guard in setRoutingOptions, which treats TunAddress4 as
+	// the only legitimate IPv4 source entering the tunnel. Keeping them here is
+	// what stops those two from drifting apart.
+	TunAddress4 = "172.19.0.1/28"
+	TunAddress6 = "fdfe:dcba:9876::1/126"
 )
 
 var (
@@ -538,9 +545,9 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 		// Claiming an IPv6 address here is what makes AutoRoute install a ::/0
 		// route into the tun. Without it the host keeps its native IPv6 route
 		// and IPv6 traffic bypasses the tunnel entirely.
-		opts.Address = []netip.Prefix{netip.MustParsePrefix("172.19.0.1/28")}
+		opts.Address = []netip.Prefix{netip.MustParsePrefix(TunAddress4)}
 		if tunIPv6 {
-			opts.Address = append(opts.Address, netip.MustParsePrefix("fdfe:dcba:9876::1/126"))
+			opts.Address = append(opts.Address, netip.MustParsePrefix(TunAddress6))
 		}
 
 		options.Inbounds = append(options.Inbounds, tunInbound)
@@ -729,6 +736,93 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 			},
 		},
 	})
+
+	// Self-loop guard. Refuses IPv4 arriving at the tun from any source but the
+	// tun itself.
+	//
+	// Enabling a Windows Mobile Hotspot makes the host re-inject our own outbound
+	// dials into our own tun: they arrive carrying the host's physical address
+	// (192.168.3.28 in every capture) rather than the tun's, no rule matches
+	// them, and route.final sends them back out through the proxy — to the same
+	// address we were just dialling. Each turn costs a goroutine, a socket and a
+	// gvisor endpoint until the runtime cannot allocate another OS thread. A
+	// capture showed 45,541 such connections and the process dying in
+	// runtime.checkmcount.
+	//
+	// Matching on SOURCE rather than destination is deliberate. The loop is not
+	// specific to the hub: it re-forms on any destination the rules send to
+	// `direct`, because `direct` re-dials whatever was just captured — a fix
+	// keyed on the outbound servers stopped the hub loop and the next capture
+	// crashed on the DNS bootstrap resolver instead. Every self-originated
+	// packet shares one property no legitimate one does: a source that is not
+	// the tun.
+	//
+	// IPv4 ONLY, and that is load-bearing. The tun's IPv6 is a ULA, and source
+	// selection will not offer a ULA for a global destination, so real IPv6
+	// leaves the host carrying its GLOBAL address — a capture shows
+	// 240e:312:...  ->  [2603:1040:5:8::]:443, an ordinary connection that this
+	// rule would reject if it were family-agnostic. No IPv6 loop is reachable
+	// today (hub and both bootstrap resolvers are IPv4); revisit if that changes.
+	//
+	// WINDOWS ONLY, scoped to the evidence rather than to the capability gap.
+	// Mobile has PlatformInterface.MyInterfaceAddress / RegisterMyInterface and
+	// never had this bug, so the tempting gate is `!IsAndroid && !IsIos` — every
+	// platform without that guard. But the loop was only ever reproduced on
+	// Windows, against Internet Connection Sharing, and this rule refuses a real
+	// class of traffic: on Linux it would reject forwarded traffic from a host
+	// deliberately routing a LAN through the tunnel. Declining to do that on a
+	// platform where the problem has never been observed is a choice for whoever
+	// hits it there, not one to make on their behalf. Widening this later is one
+	// identifier; the reproduction should come first.
+	//
+	// Placed directly after hijack-dns so a captured packet is refused before any
+	// rule can route it onward. Consequence, accepted rather than overlooked:
+	// while a hotspot is up our dials are still captured, so the tunnel carries
+	// no traffic — it now fails cleanly instead of crashing, and recovers on its
+	// own when the hotspot goes away. Sharing the tunnel with hotspot clients is
+	// not supported, matching every comparable client.
+	if C.IsWindows {
+		routeRules = append(routeRules, option.Rule{
+			Type: C.RuleTypeLogical,
+			LogicalOptions: option.LogicalRule{
+				RawLogicalRule: option.RawLogicalRule{
+					Mode: C.LogicalTypeAnd,
+					Rules: []option.Rule{
+						{
+							Type: C.RuleTypeDefault,
+							DefaultOptions: option.DefaultRule{
+								RawDefaultRule: option.RawDefaultRule{Inbound: []string{InboundTUNTag}},
+							},
+						},
+						{
+							Type: C.RuleTypeDefault,
+							DefaultOptions: option.DefaultRule{
+								RawDefaultRule: option.RawDefaultRule{IPVersion: 4},
+							},
+						},
+						{
+							Type: C.RuleTypeDefault,
+							DefaultOptions: option.DefaultRule{
+								RawDefaultRule: option.RawDefaultRule{
+									SourceIPCIDR: []string{TunAddress4},
+									Invert:       true,
+								},
+							},
+						},
+					},
+				},
+				RuleAction: option.RuleAction{
+					Action: C.RuleActionTypeReject,
+					// RST rather than a silent drop: our own captured dial fails
+					// immediately instead of occupying a socket for the full 5s
+					// timeout. The pile-up is what exhausted the thread pool.
+					RejectOptions: option.RejectActionOptions{
+						Method: C.RuleActionRejectMethodDefault,
+					},
+				},
+			},
+		})
+	}
 
 	// Removed: an upstream rule forcing 10.10.34.0/24 + 2001:4188:2:600::/120 to
 	// the proxy. Those are Iranian filternet block-page sentinel addresses — an
