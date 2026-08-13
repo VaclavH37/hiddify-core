@@ -5,9 +5,9 @@ package hcore
 */
 
 import (
+	"context"
+	"crypto/subtle"
 	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"io"
 
@@ -27,8 +27,11 @@ import (
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 type CoreService struct {
@@ -51,6 +54,9 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 	}
 	static.BaseContext = libbox.BaseContext(platformInterface)
 	static.debug = params.Debug
+	// Was plumbed from the app through platform/mobile all the way to here and
+	// then read by nothing. It is the client's credential now.
+	grpcSecret = params.Secret
 	static.globalPlatformInterface = platformInterface
 	tcpConn := true // runtime.GOOS == "windows" // TODO add TVOS
 	libbox.Setup(
@@ -164,9 +170,62 @@ func StartHelloGrpcServer(listenAddressG string) (*grpc.Server, error) {
 var (
 	certpair   *hutils.CertificatePair
 	grpcServer map[SetupMode]*grpc.Server = make(map[SetupMode]*grpc.Server)
-	caCertPool                            = x509.NewCertPool()
 	mu                                    = sync.Mutex{}
+
+	// Shared secret for the secure modes, supplied by the app through
+	// SetupRequest.Secret and required on every RPC. See requireSecret.
+	grpcSecret string
 )
+
+// metadata key carrying the shared secret. Lower-case: gRPC normalises header
+// names, and a key with upper-case characters is rejected outright.
+const grpcSecretMetadataKey = "x-rayn-secret"
+
+// requireSecret rejects any call that does not present the secret this process
+// was set up with.
+//
+// The loopback interface is not isolated between apps on any platform we ship,
+// so "listening on 127.0.0.1" is not access control — any other app can connect.
+// Without this, a foreign client reaching our core can drive it, and the
+// symmetric hole (our client reaching a foreign core, handing it a decrypted
+// subscription) is closed on the other side by the client pinning the
+// certificate it fetched in-process.
+//
+// subtle.ConstantTimeCompare, because this runs before any other work on a
+// channel an untrusted local process can open at will.
+func requireSecret(ctx context.Context) error {
+	if grpcSecret == "" {
+		// Setup was given no secret. Fail closed: a secure mode with no secret
+		// would authenticate nothing while looking like it did.
+		return status.Error(codes.Unauthenticated, "core was set up without a secret")
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "missing metadata")
+	}
+	values := md.Get(grpcSecretMetadataKey)
+	if len(values) != 1 {
+		return status.Error(codes.Unauthenticated, "missing credentials")
+	}
+	if subtle.ConstantTimeCompare([]byte(values[0]), []byte(grpcSecret)) != 1 {
+		return status.Error(codes.Unauthenticated, "invalid credentials")
+	}
+	return nil
+}
+
+func secretUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := requireSecret(ctx); err != nil {
+		return nil, err
+	}
+	return handler(ctx, req)
+}
+
+func secretStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := requireSecret(ss.Context()); err != nil {
+		return err
+	}
+	return handler(srv, ss)
+}
 
 // StartGrpcServerByMode starts a gRPC server on the specified address with mTLS.
 func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server, error) {
@@ -234,16 +293,33 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 			return nil, err
 		}
 
-		// Create TLS credentials for the gRPC server
+		// Server-authenticated TLS, and no client certificate.
+		//
+		// This was RequireAndVerifyClientCert against a caCertPool that only
+		// AddGrpcClientPublicKey ever populated — and that function rejected
+		// certificates outright, then synthesised an x509.Certificate carrying a
+		// public key and nothing else: no Raw, no Subject, no signature. Nothing
+		// can chain to such a certificate, so every handshake would have failed.
+		// The mode had never run.
+		//
+		// The client half is authenticated by the shared secret below instead,
+		// which needs no certificate plumbing across four platforms and no
+		// agreement between pointycastle and crypto/x509 on key encodings. What
+		// TLS is doing here is the half only it can do: letting the client PIN
+		// this certificate, so a client that reaches the wrong core aborts the
+		// handshake rather than handing it a decrypted subscription.
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{serverCert},
-			ClientAuth:   tls.RequireAndVerifyClientCert, // Enforce mutual TLS (mTLS)
-			ClientCAs:    caCertPool,                     // Client CAs to verify client certificates
+			ClientAuth:   tls.NoClientCert,
+			MinVersion:   tls.VersionTLS12,
 		}
 
-		// Create a new gRPC server with TLS credentials
 		creds := credentials.NewTLS(tlsConfig)
-		grpcServer[mode] = grpc.NewServer(grpc.Creds(creds))
+		grpcServer[mode] = grpc.NewServer(
+			grpc.Creds(creds),
+			grpc.UnaryInterceptor(secretUnaryInterceptor),
+			grpc.StreamInterceptor(secretStreamInterceptor),
+		)
 	}
 	// Register your gRPC service here
 	RegisterCoreServer(grpcServer[mode], &CoreService{})
@@ -280,29 +356,32 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 }
 
 // GetGrpcServerPublicKey returns the gRPC server's public key.
+// GetGrpcServerPublicKey returns the PEM certificate the client must pin, or nil
+// if there is nothing to pin.
+//
+// nil is returned rather than dereferencing a nil certpair, which is what this
+// did. certpair is only ever populated by the secure modes, so every call in an
+// insecure mode — and every call made before Setup — panicked.
 func GetGrpcServerPublicKey() []byte {
+	mu.Lock()
+	defer mu.Unlock()
+	if certpair == nil {
+		return nil
+	}
 	return certpair.Certificate
 }
 
 // AddGrpcClientPublicKey adds a client's public key to the CA pool for verification.
+// Deprecated: client certificates are not used. The client is authenticated by
+// the shared secret in SetupRequest.Secret; see requireSecret.
+//
+// Kept as a symbol because it is exported through the gomobile binding, so
+// deleting it would break the Android and iOS builds before anyone read this.
+// It now fails loudly instead of appearing to work: the previous implementation
+// rejected certificates, then built an x509.Certificate holding a public key and
+// nothing else — unusable as a CA, so every mTLS handshake would have failed.
 func AddGrpcClientPublicKey(clientPublicKey []byte) error {
-	block, _ := pem.Decode(clientPublicKey)
-	if block == nil || block.Type != "PUBLIC KEY" {
-		return fmt.Errorf("failed to decode client public key")
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
-		if err != nil {
-			return fmt.Errorf("failed to parse client public key: %v", err)
-		}
-		cert = &x509.Certificate{
-			PublicKey: pubKey,
-		}
-	}
-	caCertPool.AddCert(cert)
-
-	return nil
+	return fmt.Errorf("client certificates are not supported; the client authenticates with the setup secret")
 }
 
 func CloseGrpcServer(mode SetupMode) {

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net"
 	"os"
 	"time"
 )
@@ -30,17 +31,30 @@ func GenerateCertificatePair() (*CertificatePair, error) {
 	certTemplate := x509.Certificate{
 		SerialNumber: big.NewInt(1), // A unique serial number for the certificate
 		Subject: pkix.Name{
-			Organization: []string{"Hiddify, Inc."},
-			CommonName:   "Hiddify",
+			Organization: []string{"Rayn Labs LLC"},
+			CommonName:   "rayn-core",
 		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(365 * 24 * time.Hour), // Valid for 1 year
+		NotBefore: time.Now().Add(-24 * time.Hour),
+		// Ten years, deliberately. This certificate is pinned by the client that
+		// fetched it in-process moments earlier, so its lifetime buys no security
+		// — while an expiry does buy an outage on a device whose clock is wrong,
+		// and NTP correction was removed from the builder, so nothing puts a
+		// skewed clock right. The backdated NotBefore is the same argument.
+		NotAfter: time.Now().Add(10 * 365 * 24 * time.Hour),
 
-		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 
+		// WITHOUT THESE THE CERTIFICATE IS UNVERIFIABLE, and that is why the
+		// secure gRPC modes had never worked. Every current TLS stack matches the
+		// server name against the SAN and ignores CommonName entirely, so a
+		// certificate carrying only `CN=Hiddify` fails verification for a client
+		// dialling 127.0.0.1 — which is the only thing that ever dials it.
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		DNSNames:    []string{"localhost"},
+
 		BasicConstraintsValid: true,
-		IsCA:                  true, // This is a CA certificate (for testing purposes)
+		IsCA:                  true, // self-signed: it is its own issuer
 	}
 
 	// Self-sign the certificate
