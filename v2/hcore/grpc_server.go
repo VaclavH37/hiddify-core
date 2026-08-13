@@ -174,16 +174,28 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 	if !strings.Contains(listenAddressG, ":") {
 		return nil, fmt.Errorf("invalid listen address (no port): %s", listenAddressG)
 	}
-	// Convert the port from string to uint16
+	// Well-formedness only. The authoritative answer about whether the port is
+	// usable comes from net.Listen below.
 	portStr := strings.Split(listenAddressG, ":")[1]
-	port, err := strconv.ParseUint(portStr, 10, 16)
-	if err != nil {
+	if _, err := strconv.ParseUint(portStr, 10, 16); err != nil {
 		return nil, fmt.Errorf("failed to convert port %s to uint16: %v", portStr, err)
 	}
-	if hutils.IsPortInUse(uint16(port)) {
-		return nil, fmt.Errorf("port %s is already in use", portStr)
-	}
-	// Fetch the server private key and public key from the database
+
+	// THIS MUST STAY THE FIRST THING AFTER VALIDATION.
+	//
+	// A `hutils.IsPortInUse` probe used to run above it, and because that probe
+	// is a bind test — net.Listen, then close — it returned true for a port THIS
+	// PROCESS was already serving. So a second Setup call, which should be a
+	// no-op returning the server below, failed with "port is already in use"
+	// instead. Once anything made the client's first call fail while the server
+	// was in fact up, every retry re-entered that same refusal: on iOS the retry
+	// in RaynCoreService.validateConfig hit it, and profile import stayed broken
+	// for the life of the process, clearing only on an app restart.
+	//
+	// Do not reinstate the probe. It is redundant — net.Listen returns an
+	// accurate error — and it is a TOCTOU race besides: the probe binds, closes,
+	// and the real listen happens afterwards against a port that may have been
+	// taken in between.
 	if _, exists := grpcServer[mode]; exists {
 		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already started")
 		return grpcServer[mode], nil
@@ -239,6 +251,13 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 	// Listen on the provided address
 	lis, err := net.Listen("tcp", listenAddressG)
 	if err != nil {
+		// Undo the map entry made above. Without this the server is registered
+		// but serving nothing, and the already-started guard hands that corpse
+		// back to every subsequent call — a permanent connection-refused with no
+		// second error to explain it. The removed IsPortInUse probe used to hide
+		// this by failing before the assignment; it is a real bug either way, and
+		// removing the probe is what makes it reachable.
+		delete(grpcServer, mode)
 		Log(LogLevel_ERROR, LogType_CORE, fmt.Sprintf("failed to listen on %s: %v\n", listenAddressG, err))
 		return nil, err
 	}
