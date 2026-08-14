@@ -6,6 +6,7 @@ package hcore
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
@@ -227,6 +228,21 @@ func secretStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamSer
 	return handler(srv, ss)
 }
 
+// pemBody strips the armour lines and all whitespace from a PEM block, leaving
+// the base64 payload. Used only to produce a fingerprint that both sides of the
+// gRPC channel can compute identically.
+func pemBody(pem []byte) string {
+	var b strings.Builder
+	for _, line := range strings.Split(string(pem), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "-----") {
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
 // StartGrpcServerByMode starts a gRPC server on the specified address with mTLS.
 func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server, error) {
 	// Validate the listen address
@@ -289,6 +305,24 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 			Log(LogLevel_ERROR, LogType_CORE, fmt.Sprintf("failed to generate certificate pair: %v", err))
 			return nil, err
 		}
+		// Fingerprint of what this server will present, written to STDERR on
+		// purpose: stderr is redirected to data/stderr<mode>.log by Setup before
+		// we get here, so it survives the gRPC channel being exactly what is
+		// broken. Anything logged through the normal factory reaches the app over
+		// that channel and is therefore useless for diagnosing it.
+		//
+		// A fingerprint of a public, per-launch, loopback-only certificate is not
+		// sensitive; it exists so the pinned copy on the Dart side can be compared
+		// against the served copy without guessing.
+		//
+		// Hashed over the base64 body rather than the PEM bytes so it matches
+		// CoreInterfaceMobile._pemFingerprint, which has to ignore armour and line
+		// breaks to compare a Go-encoded PEM with a Dart-re-encoded one.
+		certSum := sha256.Sum256([]byte(pemBody(certpair.Certificate)))
+		// certSum[:8] -> 16 hex characters, matching the substring(0, 16) the Dart
+		// side takes. Truncation is fine: this distinguishes two certificates, it
+		// does not authenticate one.
+		fmt.Fprintf(os.Stderr, "rayn: grpc server certificate sha256=%x len=%d\n", certSum[:8], len(certpair.Certificate))
 		// Load server certificate and private key
 		serverCert, err := tls.X509KeyPair(certpair.Certificate, certpair.PrivateKey)
 		if err != nil {
