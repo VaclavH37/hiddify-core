@@ -20,53 +20,77 @@ func TestRequireSecret(t *testing.T) {
 	}
 
 	cases := []struct {
-		name       string
-		configured string
-		ctx        context.Context
-		wantOK     bool
+		name             string
+		configured       string
+		enforceWhenUnset bool
+		ctx              context.Context
+		wantOK           bool
 	}{
 		{
 			name:       "correct secret is accepted",
-			configured: good, ctx: withMD(grpcSecretMetadataKey, good), wantOK: true,
+			configured: good, enforceWhenUnset: true, ctx: withMD(grpcSecretMetadataKey, good), wantOK: true,
 		},
 		{
 			name:       "wrong secret is rejected",
-			configured: good, ctx: withMD(grpcSecretMetadataKey, "wrong"),
+			configured: good, enforceWhenUnset: true, ctx: withMD(grpcSecretMetadataKey, "wrong"),
 		},
 		{
 			name:       "absent header is rejected",
-			configured: good, ctx: withMD("unrelated", "x"),
+			configured: good, enforceWhenUnset: true, ctx: withMD("unrelated", "x"),
 		},
 		{
 			name:       "no metadata at all is rejected",
-			configured: good, ctx: context.Background(),
+			configured: good, enforceWhenUnset: true, ctx: context.Background(),
 		},
 		{
-			// The dangerous one. A core set up without a secret must refuse
-			// everything rather than accept everything -- otherwise a secure mode
-			// authenticates nothing while looking like it does.
-			name:       "unconfigured core rejects even a matching empty header",
-			configured: "", ctx: withMD(grpcSecretMetadataKey, ""),
+			// The dangerous one. A SECURE mode set up without a secret must refuse
+			// everything rather than accept everything -- otherwise it authenticates
+			// nothing while looking like it does.
+			name:       "unconfigured secure mode rejects even a matching empty header",
+			configured: "", enforceWhenUnset: true, ctx: withMD(grpcSecretMetadataKey, ""),
 		},
 		{
-			name:       "unconfigured core rejects a populated header",
-			configured: "", ctx: withMD(grpcSecretMetadataKey, good),
+			name:       "unconfigured secure mode rejects a populated header",
+			configured: "", enforceWhenUnset: true, ctx: withMD(grpcSecretMetadataKey, good),
+		},
+		{
+			// The background core is the deliberate exception. iOS keeps its secret
+			// under AfterFirstUnlockThisDeviceOnly, so a tunnel the system starts
+			// after a reboot but before the first unlock cannot read one -- and
+			// refusing there would kill status and logs for a running tunnel over a
+			// window the user cannot see or fix. It is not a bypass: the secret lives
+			// in our own sandbox, so nothing hostile can clear it to reach this
+			// branch.
+			name:       "unconfigured background mode accepts, by design",
+			configured: "", enforceWhenUnset: false, ctx: context.Background(), wantOK: true,
+		},
+		{
+			// ...but once it HAS one, the exception stops applying.
+			name:       "configured background mode still rejects a wrong secret",
+			configured: good, enforceWhenUnset: false, ctx: withMD(grpcSecretMetadataKey, "wrong"),
 		},
 		{
 			// gRPC allows repeated keys. Accepting when any one matches would let a
 			// caller brute-force by sending many values in a single call.
 			name:       "duplicate headers are rejected even when one is correct",
-			configured: good, ctx: withMD(grpcSecretMetadataKey, good, grpcSecretMetadataKey, "wrong"),
+			configured: good, enforceWhenUnset: true, ctx: withMD(grpcSecretMetadataKey, good, grpcSecretMetadataKey, "wrong"),
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			saved := grpcSecret
-			grpcSecret = tc.configured
-			defer func() { grpcSecret = saved }()
+			const mode = SetupMode_GRPC_NORMAL
+			saved, had := grpcSecrets[mode]
+			grpcSecrets[mode] = tc.configured
+			defer func() {
+				if had {
+					grpcSecrets[mode] = saved
+				} else {
+					delete(grpcSecrets, mode)
+				}
+			}()
 
-			err := requireSecret(tc.ctx)
+			err := requireSecret(tc.ctx, mode, tc.enforceWhenUnset)
 			if tc.wantOK {
 				if err != nil {
 					t.Fatalf("expected acceptance, got %v", err)
@@ -80,6 +104,56 @@ func TestRequireSecret(t *testing.T) {
 				t.Errorf("code = %v, want Unauthenticated", got)
 			}
 		})
+	}
+}
+
+// The secret is per-MODE, and this is the test that would have caught the
+// Android regression.
+//
+// Android's VPN service carries no `android:process`, so it runs in the app's
+// own process: one Go runtime hosting the foreground core (mode 1) and the
+// background core (mode 4). While both were handed the same value a single
+// shared variable looked fine. The moment the background channel got its own
+// rotating secret, whichever Setup ran last would have overwritten the other's,
+// and every foreground call would have been rejected -- on Android only, since
+// the iOS extension is a separate process.
+func TestSecretsAreIsolatedPerMode(t *testing.T) {
+	const fg, bg = "foreground-secret", "background-secret"
+
+	for _, mode := range []SetupMode{SetupMode_GRPC_NORMAL, SetupMode_GRPC_BACKGROUND_INSECURE} {
+		saved, had := grpcSecrets[mode]
+		defer func(m SetupMode, s string, h bool) {
+			if h {
+				grpcSecrets[m] = s
+			} else {
+				delete(grpcSecrets, m)
+			}
+		}(mode, saved, had)
+	}
+
+	// Order matters: background is set up SECOND on both platforms.
+	grpcSecrets[SetupMode_GRPC_NORMAL] = fg
+	grpcSecrets[SetupMode_GRPC_BACKGROUND_INSECURE] = bg
+
+	ctxWith := func(secret string) context.Context {
+		return metadata.NewIncomingContext(context.Background(), metadata.Pairs(grpcSecretMetadataKey, secret))
+	}
+
+	if err := requireSecret(ctxWith(fg), SetupMode_GRPC_NORMAL, true); err != nil {
+		t.Fatalf("foreground rejected its own secret after background setup: %v", err)
+	}
+	if err := requireSecret(ctxWith(bg), SetupMode_GRPC_BACKGROUND_INSECURE, false); err != nil {
+		t.Fatalf("background rejected its own secret: %v", err)
+	}
+	// Neither may be replayed against the other. This is the whole reason the
+	// background secret is a separate value: it crosses a plaintext socket, so a
+	// process that squats the port receives a copy, and it must not unlock the
+	// pinned channel that carries the decrypted subscription.
+	if err := requireSecret(ctxWith(bg), SetupMode_GRPC_NORMAL, true); err == nil {
+		t.Fatal("background secret was accepted by the foreground core")
+	}
+	if err := requireSecret(ctxWith(fg), SetupMode_GRPC_BACKGROUND_INSECURE, false); err == nil {
+		t.Fatal("foreground secret was accepted by the background core")
 	}
 }
 

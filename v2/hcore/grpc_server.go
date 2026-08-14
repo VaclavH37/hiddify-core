@@ -57,7 +57,7 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 	static.debug = params.Debug
 	// Was plumbed from the app through platform/mobile all the way to here and
 	// then read by nothing. It is the client's credential now.
-	grpcSecret = params.Secret
+	grpcSecrets[params.Mode] = params.Secret
 	static.globalPlatformInterface = platformInterface
 	tcpConn := true // runtime.GOOS == "windows" // TODO add TVOS
 	libbox.Setup(
@@ -173,9 +173,19 @@ var (
 	grpcServer map[SetupMode]*grpc.Server = make(map[SetupMode]*grpc.Server)
 	mu                                    = sync.Mutex{}
 
-	// Shared secret for the secure modes, supplied by the app through
-	// SetupRequest.Secret and required on every RPC. See requireSecret.
-	grpcSecret string
+	// Secret required on every RPC, supplied by the app through
+	// SetupRequest.Secret. See requireSecret.
+	//
+	// KEYED BY MODE, and that is load-bearing rather than tidiness. On Android
+	// the VPN service has no `android:process` attribute, so it runs in the app's
+	// own process — one Go runtime hosting BOTH the foreground core (mode 1) and
+	// the background core (mode 4). A single package-level string meant whichever
+	// Setup ran last silently overwrote the other's credential; once those two
+	// stopped being the same value, every foreground call would have been
+	// rejected against the background secret. iOS does not have that problem (the
+	// packet-tunnel extension is a separate process) which is exactly why it
+	// would have looked like an Android-only regression.
+	grpcSecrets = make(map[SetupMode]string)
 )
 
 // metadata key carrying the shared secret. Lower-case: gRPC normalises header
@@ -194,11 +204,30 @@ const grpcSecretMetadataKey = "x-rayn-secret"
 //
 // subtle.ConstantTimeCompare, because this runs before any other work on a
 // channel an untrusted local process can open at will.
-func requireSecret(ctx context.Context) error {
-	if grpcSecret == "" {
-		// Setup was given no secret. Fail closed: a secure mode with no secret
-		// would authenticate nothing while looking like it did.
-		return status.Error(codes.Unauthenticated, "core was set up without a secret")
+//
+// enforceWhenUnset decides what an EMPTY grpcSecret means, and the two modes
+// genuinely differ:
+//
+//   - Secure modes (1/2): true. The platform always has a secret to give — the
+//     app generates it — so an empty one means the plumbing broke, and a secure
+//     mode that authenticates nothing while looking like it does is worse than
+//     one that refuses.
+//   - Background insecure (4): false. The extension can be started on demand by
+//     the system, and on iOS the keychain item is AfterFirstUnlockThisDeviceOnly
+//     — a tunnel that comes up after a reboot but before the first unlock CANNOT
+//     read it, so `opts.secret` is legitimately "". Refusing there would leave
+//     the app unable to read status or logs from a tunnel that is running fine,
+//     for a window the user cannot see or fix. Degrading to today's behaviour in
+//     exactly that window is the lesser harm, and it is not a bypass: the secret
+//     lives in this app's sandbox, so a hostile local process cannot clear it to
+//     force this branch.
+func requireSecret(ctx context.Context, mode SetupMode, enforceWhenUnset bool) error {
+	secret := grpcSecrets[mode]
+	if secret == "" {
+		if enforceWhenUnset {
+			return status.Error(codes.Unauthenticated, "core was set up without a secret")
+		}
+		return nil
 	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -208,24 +237,28 @@ func requireSecret(ctx context.Context) error {
 	if len(values) != 1 {
 		return status.Error(codes.Unauthenticated, "missing credentials")
 	}
-	if subtle.ConstantTimeCompare([]byte(values[0]), []byte(grpcSecret)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(values[0]), []byte(secret)) != 1 {
 		return status.Error(codes.Unauthenticated, "invalid credentials")
 	}
 	return nil
 }
 
-func secretUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if err := requireSecret(ctx); err != nil {
-		return nil, err
+func secretUnaryInterceptor(mode SetupMode, enforceWhenUnset bool) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if err := requireSecret(ctx, mode, enforceWhenUnset); err != nil {
+			return nil, err
+		}
+		return handler(ctx, req)
 	}
-	return handler(ctx, req)
 }
 
-func secretStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := requireSecret(ss.Context()); err != nil {
-		return err
+func secretStreamInterceptor(mode SetupMode, enforceWhenUnset bool) grpc.StreamServerInterceptor {
+	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if err := requireSecret(ss.Context(), mode, enforceWhenUnset); err != nil {
+			return err
+		}
+		return handler(srv, ss)
 	}
-	return handler(srv, ss)
 }
 
 // pemBody strips the armour lines and all whitespace from a PEM block, leaving
@@ -276,7 +309,42 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 		return grpcServer[mode], nil
 	}
 
-	if mode == SetupMode_GRPC_BACKGROUND_INSECURE || mode == SetupMode_GRPC_NORMAL_INSECURE {
+	if mode == SetupMode_GRPC_BACKGROUND_INSECURE {
+		// Authenticated but NOT encrypted, and that combination is deliberate.
+		//
+		// This is the core inside the VPN service (Android `:bg`) or the packet
+		// tunnel extension (iOS). It serves the full CoreService, and two of those
+		// RPCs matter to anyone who can reach the port: OutboundsInfo streams every
+		// outbound's `host` and `port` — the hub and node addresses that
+		// configs/<id>.enc exists to keep off the device in the clear — and Stop
+		// silently drops the tunnel. Loopback is shared between apps on Android and
+		// iOS alike, so before this any installed app could do both.
+		//
+		// TLS is not used here because the client cannot pin what does not exist
+		// yet: this core is started by the app (or on demand by the system) long
+		// after the client is built, so a certificate would have to travel
+		// extension -> app through the platform store, and on Android that
+		// direction is exactly the one SharedPreferences cannot do reliably across
+		// processes. The secret travels app -> service, which is the direction that
+		// already works.
+		//
+		// The cost of plaintext is that a process which squats this port before we
+		// bind it receives the secret. Two things bound that: it is a DIFFERENT
+		// secret from the foreground one (so it cannot be replayed against the
+		// pinned, TLS-protected channel that carries the decrypted subscription),
+		// and the app rotates it on every connect, so a captured value is dead by
+		// the next one.
+		grpcServer[mode] = grpc.NewServer(
+			grpc.UnaryInterceptor(secretUnaryInterceptor(mode, false)),
+			grpc.StreamInterceptor(secretStreamInterceptor(mode, false)),
+		)
+	} else if mode == SetupMode_GRPC_NORMAL_INSECURE {
+		// Desktop only, and still unauthenticated. CoreInterfaceDesktop hardcodes
+		// this mode and its client sends no secret, so enforcing here would break
+		// Windows/macOS/Linux outright. Desktop is a weaker case in any event: a
+		// hostile process running as the same user can already read the Drift DB,
+		// where the decrypted URL sits, so loopback adds little. Left as the last
+		// piece of this work.
 		grpcServer[mode] = grpc.NewServer()
 	} else {
 		// Generated FRESH every launch, and deliberately not persisted.
@@ -355,8 +423,8 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 		creds := credentials.NewTLS(tlsConfig)
 		grpcServer[mode] = grpc.NewServer(
 			grpc.Creds(creds),
-			grpc.UnaryInterceptor(secretUnaryInterceptor),
-			grpc.StreamInterceptor(secretStreamInterceptor),
+			grpc.UnaryInterceptor(secretUnaryInterceptor(mode, true)),
+			grpc.StreamInterceptor(secretStreamInterceptor(mode, true)),
 		)
 	}
 	// Register your gRPC service here
