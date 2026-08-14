@@ -263,27 +263,31 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 	if mode == SetupMode_GRPC_BACKGROUND_INSECURE || mode == SetupMode_GRPC_NORMAL_INSECURE {
 		grpcServer[mode] = grpc.NewServer()
 	} else {
-		table := db.GetTable[hcommon.AppSettings]()
-		Log(LogLevel_DEBUG, LogType_CORE, table)
-		grpcServerPrivateKey, err := table.Get("grpc_server_private_key")
-		grpcServerPublicKey, err2 := table.Get("grpc_server_public_key")
-		if err != nil || err2 != nil {
-			Log(LogLevel_DEBUG, LogType_CORE, fmt.Sprintf("failed to get grpc_server_private_key and grpc_server_public_key from database: %v %v\n", err, err2))
-			certpair, err = hutils.GenerateCertificatePair()
-			if err != nil {
-				Log(LogLevel_ERROR, LogType_CORE, fmt.Sprintf("failed to generate certificate pair: %v", err))
-
-				return nil, err
-			}
-			table.UpdateInsert(
-				&hcommon.AppSettings{Id: "grpc_server_public_key", Value: certpair.Certificate},
-				&hcommon.AppSettings{Id: "grpc_server_private_key", Value: certpair.PrivateKey},
-			)
-		} else {
-			certpair = &hutils.CertificatePair{
-				Certificate: grpcServerPublicKey.Value.([]byte),
-				PrivateKey:  grpcServerPrivateKey.Value.([]byte),
-			}
+		// Generated FRESH every launch, and deliberately not persisted.
+		//
+		// It used to be stored in the settings DB under grpc_server_public_key /
+		// grpc_server_private_key and reused forever. That turned a fixed bug into
+		// a permanent one: a build whose generator produced an unverifiable
+		// certificate — no SAN, as this one did until the SANs were added — wrote
+		// that certificate to disk, and every later build loaded it back rather
+		// than generating a good one. Fixing the generator changed nothing on any
+		// device that had already run the broken build; only wiping app data did.
+		// That is exactly what happened on iOS, and Android escaped it only
+		// because its core was current before its first secure-mode start.
+		//
+		// Persistence bought nothing to weigh against that. The client pins this
+		// certificate after fetching it over the platform method channel in the
+		// same launch, so it never needs to survive a restart, and nothing caches
+		// it across one. Dropping the store also drops a dependency on a LevelDB
+		// that takes a single-process lock — the app and the VPN service share a
+		// working directory, so whichever starts second could not read it anyway.
+		//
+		// Cost is one RSA-2048 keygen per launch, at setup, once.
+		var err error
+		certpair, err = hutils.GenerateCertificatePair()
+		if err != nil {
+			Log(LogLevel_ERROR, LogType_CORE, fmt.Sprintf("failed to generate certificate pair: %v", err))
+			return nil, err
 		}
 		// Load server certificate and private key
 		serverCert, err := tls.X509KeyPair(certpair.Certificate, certpair.PrivateKey)
