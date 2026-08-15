@@ -183,7 +183,7 @@ func buildStandaloneConfig(ctx context.Context, ropt *config.ReadOptions, hopts 
 			TempDir:           "./tmp",
 			FlutterStatusPort: 0,
 			Debug:             false,
-			Listen:            "127.0.0.1:17078",
+			Listen:            StandaloneListenAddress,
 			Mode:              SetupMode_GRPC_NORMAL_INSECURE,
 		}, nil); err != nil {
 		return "", fmt.Errorf("failed to set up global configuration: %w", err)

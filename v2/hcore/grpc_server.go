@@ -192,6 +192,24 @@ var (
 // names, and a key with upper-case characters is rejected outright.
 const grpcSecretMetadataKey = "x-rayn-secret"
 
+// StandaloneListenAddress is where the CLI's own core listens, and where the
+// `command` subcommand dials.
+//
+// Was 127.0.0.1:17078 — upstream Hiddify's foreground port — in three places
+// that have to agree: the standalone builder, `hiddify run`, and the `command`
+// client. Any Hiddify CLI on the same machine collided with it, which is the
+// same defect the app was fixed for and the last place it survived.
+//
+// DELIBERATELY NOT 21978 OR 21979. The CLI is a separate process from the app,
+// so reusing the app's foreground port would have it fight the app's own core
+// for the bind — and, worse, let the CLI's insecure client attach to whichever
+// won. That is precisely the class of bug the port move exists to remove; it
+// would only look different because both processes are ours.
+//
+// Same rationale as the app's ports otherwise: below the ephemeral range
+// (49152+) so the OS cannot assign it, above 1024, clear of common dev ports.
+const StandaloneListenAddress = "127.0.0.1:21980"
+
 // requireSecret rejects any call that does not present the secret this process
 // was set up with.
 //

@@ -27,7 +27,9 @@ func init() {
 }
 
 func execCommandgrpc(cmd *cobra.Command, args []string) {
-	conn, err := grpc.Dial("127.0.0.1:17078", grpc.WithInsecure())
+	// Must match the address the standalone core listens on; these were two
+	// separate 17078 literals and nothing tied them together.
+	conn, err := grpc.Dial(hcore.StandaloneListenAddress, grpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}

@@ -32,10 +32,10 @@ func runCommand(cmd *cobra.Command, args []string) {
 			FlutterStatusPort: 0,
 			Debug:             false,
 			Mode:              hcore.SetupMode_GRPC_NORMAL_INSECURE,
-			Listen:            "127.0.0.1:17078",
+			Listen:            hcore.StandaloneListenAddress,
 		}, nil,
 	)
-	// conn, err := grpc.Dial("127.0.0.1:17078", grpc.WithInsecure())
+	// conn, err := grpc.Dial(hcore.StandaloneListenAddress, grpc.WithInsecure())
 	// if err != nil {
 	// 	fmt.Printf("did not connect: %v", err)
 	// }
