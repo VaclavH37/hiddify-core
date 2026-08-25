@@ -208,7 +208,7 @@
   "experimental": {
     "cache_file": {
       "enabled": true,
-      "path": "data/clash.db",
+      "path": "data/rayn_cache.db",
       "store_rdrc": true,
       "store_warp_config": true
     },

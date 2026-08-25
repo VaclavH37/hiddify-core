@@ -90,7 +90,7 @@ func TestRealProfileStartsTheBox(t *testing.T) {
 	stageRuleSets(t)
 
 	// The cache-file service initialises at StartStateInitialize and opens
-	// data/clash.db relative to CWD. stageRuleSets only lays out rulesets/, so
+	// data/rayn_cache.db relative to CWD. stageRuleSets only lays out rulesets/, so
 	// without this the box fails start on a missing directory — a test-environment
 	// artefact that looks exactly like a config fault.
 	if err := os.MkdirAll("data", 0o755); err != nil {

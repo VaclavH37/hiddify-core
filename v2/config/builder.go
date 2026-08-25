@@ -496,7 +496,18 @@ func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 				StoreFakeIP:     false,
 				StoreRDRC:       true,
 				StoreWARPConfig: true,
-				Path:            "data/clash.db",
+				// Renamed off "clash.db". The file sits in the shipped app's own
+				// data directory, so a Clash-branded name there ties this client
+				// to the ecosystem it is built on -- the same reason the Windows
+				// service, tun adapter, DLL and CLI were renamed.
+				//
+				// Renaming ORPHANS the old file rather than migrating it, and the
+				// selector's persisted exit choice lives inside: every existing
+				// install drops to auto-select once, because Selector.Start finds
+				// nothing at the new path. Accepted deliberately -- this is
+				// pre-release with no users to reset. Were that not true, this
+				// would need a rename-on-startup migration instead.
+				Path: "data/rayn_cache.db",
 			},
 
 			Monitoring: &option.MonitoringOptions{

@@ -39,7 +39,7 @@ func TestSelectOutboundSwitchesAndNotifies(t *testing.T) {
 	}
 
 	stageRuleSets(t)
-	// cache-file opens data/clash.db relative to CWD; see startprofile_test.go.
+	// cache-file opens data/rayn_cache.db relative to CWD; see startprofile_test.go.
 	if err := os.MkdirAll("data", 0o755); err != nil {
 		t.Fatal(err)
 	}

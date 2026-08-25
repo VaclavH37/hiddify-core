@@ -205,7 +205,7 @@ func TestV2RayFormatIsNotParsed(t *testing.T) {
 // load on a device, and would do so as the unhelpful "failed to start background
 // core" rather than anything naming the file.
 //
-// data/clash.db is exempt — it is the cache file, not a rule-set source.
+// data/rayn_cache.db is exempt — it is the cache file, not a rule-set source.
 func TestLocalRuleSetPathsStayUnderRulesetsDir(t *testing.T) {
 	opts := DefaultHiddifyOptions()
 	shipped(opts)
