@@ -2,9 +2,7 @@ package config
 
 import (
 	context "context"
-	"encoding/base64"
 	"fmt"
-	"math/rand"
 	"net"
 	"net/netip"
 	"net/url"
@@ -459,18 +457,36 @@ func setExperimental(options *option.Options, hopt *HiddifyOptions) {
 			hopt.ConnectionTestUrls = []string{hopt.ConnectionTestUrl}
 		}
 	}
+	// Despite the name, this flag now gates CACHE FILE and MONITORING, not the
+	// Clash API -- see the ClashAPI block below. Turning it off is not a way to
+	// "disable the clash api"; it drops the selector's persisted exit choice and
+	// the data behind the proxy list and latency figures with it. The one caller
+	// that does turn it off (hcore/independent_instance.go) wants exactly that:
+	// a standalone instance with no UI to serve.
 	if hopt.EnableClashApi {
-		if hopt.ClashApiSecret == "" {
-			hopt.ClashApiSecret = generateRandomString(16)
-		}
 		options.Experimental = &option.ExperimentalOptions{
 			UnifiedDelay: &option.UnifiedDelayOptions{
 				Enabled: true,
 			},
-			ClashAPI: &option.ClashAPIOptions{
-				ExternalController: fmt.Sprintf("%s:%d", "127.0.0.1", hopt.ClashApiPort),
-				Secret:             hopt.ClashApiSecret,
-			},
+			// Deliberately EMPTY. An external controller opens an HTTP server on
+			// loopback, and this client never speaks to it -- the app drives the
+			// core over gRPC, and nothing in Dart references the port or the API.
+			// It was a listener no one called, authenticated by a secret no one
+			// held: builder.go minted a fresh random one per start and never told
+			// anybody, so not even the app could have used it.
+			//
+			// Loopback is not isolated between apps on Android or desktop, which
+			// is why the gRPC channel was moved off an insecure loopback port in
+			// the first place. Same reasoning, same conclusion.
+			//
+			// Non-nil rather than removed: box.go registers the ClashServer on
+			// `ClashAPI != nil || PlatformLogWriter != nil`, and that service still
+			// backs log observation and the url-test history storage. A nil here
+			// would drop it on any platform without a PlatformLogWriter. The
+			// server itself gates its listener on `ExternalController != ""`
+			// (clashapi/server.go:166), so an empty value keeps the service and
+			// opens no socket.
+			ClashAPI: &option.ClashAPIOptions{},
 
 			CacheFile: &option.CacheFileOptions{
 				Enabled: true,
@@ -1558,20 +1574,7 @@ func removeDuplicateStr(strSlice []string) []string {
 	return list
 }
 
-func generateRandomString(length int) string {
-	// Determine the number of bytes needed
-	bytesNeeded := (length*6 + 7) / 8
-
-	// Generate random bytes
-	randomBytes := make([]byte, bytesNeeded)
-	_, err := rand.Read(randomBytes)
-	if err != nil {
-		return "hiddify"
-	}
-
-	// Encode random bytes to base64
-	randomString := base64.URLEncoding.EncodeToString(randomBytes)
-
-	// Trim padding characters and return the string
-	return randomString[:length]
-}
+// generateRandomString was here. Its only live caller minted the Clash API
+// secret, and that is gone with the external controller; the sole other mention
+// (warp.go's rndDomain) has been commented out upstream for as long as this fork
+// has existed.

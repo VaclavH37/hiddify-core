@@ -15,7 +15,16 @@ type HiddifyOptions struct {
 	EnableFullConfig bool   `json:"enable-full-config,omitempty" overridable:"true"`
 	LogLevel         string `json:"log-level,omitempty"`
 	LogFile          string `json:"log-file,omitempty"`
-	EnableClashApi   bool   `json:"enable-clash-api,omitempty"`
+	// Misnamed, and load-bearing anyway: setExperimental gates the whole
+	// `experimental` block on this, so it controls CACHE FILE and MONITORING as
+	// well as the (now socket-less) Clash API. Turning it off drops the
+	// selector's persisted exit choice and the proxy list's data with it.
+	EnableClashApi bool `json:"enable-clash-api,omitempty"`
+	// Both unread since the external controller was emptied: no socket is opened,
+	// so there is no port to bind and no secret to check. Kept because clients
+	// still send them and encoding/json would otherwise be the only thing
+	// noticing; delete them together with the field above if the Clash API is
+	// ever removed outright.
 	ClashApiPort     uint16 `json:"clash-api-port,omitempty"`
 	ClashApiSecret   string `json:"web-secret,omitempty"`
 	Region           string `json:"region,omitempty"`

@@ -202,10 +202,7 @@
       "store_rdrc": true,
       "store_warp_config": true
     },
-    "clash_api": {
-      "external_controller": "127.0.0.1:16756",
-      "secret": "\u003credacted\u003e"
-    },
+    "clash_api": {},
     "monitoring": {
       "debounce_window": "500ms",
       "idle_timeout": "1h30m0s",

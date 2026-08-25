@@ -80,6 +80,52 @@ func TestNoFakeIP(t *testing.T) {
 // regression: a future setExperimental that wires Debug through to
 // experimental.debug would hand every debug-build user a profiling port, and
 // with LogLevel already plumbed there is an obvious-looking place to do it.
+// The Clash API must never open a socket, while cache-file and monitoring must
+// always be configured.
+//
+// All three live in the same `if hopt.EnableClashApi` block in setExperimental,
+// which is the trap: the flag reads as though it controls the API, but the two
+// things this client actually depends on are inside it too. Cache-file carries
+// the selector's persisted exit choice (Selector.Start -> LoadSelected), so
+// losing it silently resets every user to auto-select; monitoring is what feeds
+// the proxy list and the latency figures.
+//
+// The API itself is dead weight here -- the app drives the core over gRPC and no
+// Dart code references the port -- so an external controller is a loopback HTTP
+// listener nobody calls, on a loopback that is not isolated between apps. The
+// server gates its listener on ExternalController != "" (clashapi/server.go),
+// which is why an empty value keeps the ClashServer service registered for log
+// observation and url-test history while opening nothing.
+func TestClashAPIOpensNoSocketButCacheAndMonitoringSurvive(t *testing.T) {
+	opts := DefaultHiddifyOptions()
+	shipped(opts)
+
+	built, err := BuildConfig(t.Context(), opts, &ReadOptions{Options: outbounds(2)})
+	if err != nil {
+		t.Fatalf("BuildConfig: %v", err)
+	}
+	if built.Experimental == nil {
+		t.Fatal("experimental is nil; cache-file and monitoring are both gone with it")
+	}
+
+	if api := built.Experimental.ClashAPI; api == nil {
+		t.Error("experimental.clash_api is nil; box.go registers the ClashServer on " +
+			"`ClashAPI != nil || PlatformLogWriter != nil`, so a nil drops log observation " +
+			"and the url-test history storage on any platform without a platform log writer")
+	} else if api.ExternalController != "" {
+		t.Errorf("experimental.clash_api.external_controller is %q; that opens an HTTP "+
+			"server on loopback which nothing in this client calls", api.ExternalController)
+	}
+
+	if cf := built.Experimental.CacheFile; cf == nil || !cf.Enabled {
+		t.Error("experimental.cache_file is absent or disabled; the selector's persisted " +
+			"exit choice lives there, and without it every restart resets the user to auto-select")
+	}
+	if built.Experimental.Monitoring == nil {
+		t.Error("experimental.monitoring is absent; it feeds the proxy list and latency figures")
+	}
+}
+
 func TestExperimentalDebugListenerNeverConfigured(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
