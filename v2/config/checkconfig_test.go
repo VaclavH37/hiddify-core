@@ -127,7 +127,22 @@ func stageRuleSets(t *testing.T) {
 		t.Skipf("bundled rule-sets not available (%v)", err)
 	}
 
-	work := t.TempDir()
+	// os.MkdirTemp rather than t.TempDir: the router opens every staged .srs and
+	// holds it for the life of the process, and Windows will not unlink an open
+	// file. t.TempDir's cleanup treats that RemoveAll failure as a failure of the
+	// test itself, so a run whose every assertion had passed still reported
+	//
+	//	TempDir RemoveAll cleanup: unlinkat <tmpdir>/rulesets/block-ads.srs:
+	//	The process cannot access the file because it is being used by another process
+	//
+	// --- FAIL. That is worse than useless in a test whose whole job is to tell
+	// another team whether a config is good. Cleanup is best-effort instead; a
+	// leftover temp dir is the OS's to reap.
+	work, err := os.MkdirTemp("", "rayn-rulesets-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(work) })
 	dst := filepath.Join(work, "rulesets")
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		t.Fatal(err)

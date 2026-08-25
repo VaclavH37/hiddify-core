@@ -136,7 +136,15 @@ func TestBundledRuleSetFilesSatisfyConfig(t *testing.T) {
 
 	// The core resolves relative Local paths against CWD, so mirror the layout the
 	// Dart extractor produces at runtime: <workingDir>/rulesets/*.srs
-	work := t.TempDir()
+	// os.MkdirTemp, not t.TempDir, for the reason spelled out in stageRuleSets:
+	// the router holds the staged .srs open, Windows will not unlink an open
+	// file, and t.TempDir turns that cleanup error into a test failure after
+	// every assertion has already passed.
+	work, err := os.MkdirTemp("", "rayn-rulesets-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(work) })
 	dst := filepath.Join(work, "rulesets")
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		t.Fatal(err)
