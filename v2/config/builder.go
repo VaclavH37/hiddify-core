@@ -67,7 +67,12 @@ const (
 var (
 	OutboundMainDetour       = OutboundSelectTag
 	OutboundWARPConfigDetour = OutboundDirectFragmentTag
-	PredefinedOutboundTags   = []string{OutboundDirectTag, OutboundBypassTag, OutboundSelectTag, OutboundURLTestTag, OutboundDNSTag, OutboundDirectFragmentTag, WARPConfigTag}
+	// Tags this builder creates itself. An input outbound carrying one of these
+	// is dropped rather than passed through, because both would then exist and
+	// sing-box rejects a duplicate tag at load. OutboundRoundRobinTag belongs
+	// here for exactly the same reason as select/lowest -- it was missing, so a
+	// subscription outbound tagged "balance" collided with the group built below.
+	PredefinedOutboundTags = []string{OutboundDirectTag, OutboundBypassTag, OutboundSelectTag, OutboundURLTestTag, OutboundRoundRobinTag, OutboundDNSTag, OutboundDirectFragmentTag, WARPConfigTag}
 )
 
 // TODO include selectors
@@ -196,7 +201,12 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		switch out.Type {
 		case C.TypeBlock, C.TypeDNS:
 			continue
-		case C.TypeSelector, C.TypeURLTest:
+		// Groups, not proxies. The selector / url-test / balancer groups are built
+		// from `tags` below, so an incoming one is both redundant and a tag
+		// collision waiting to happen. C.TypeBalancer is hiddify's own group type
+		// and was absent here, so a balancer arriving from a subscription fell to
+		// `default` and was enrolled as though it were an exit.
+		case C.TypeSelector, C.TypeURLTest, C.TypeBalancer:
 			continue
 		case C.TypeCustom:
 			continue
@@ -341,6 +351,19 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 			// meaningful change here is not interrupting live connections on re-selection.
 			InterruptExistConnections: false,
 		},
+	}
+	// Everything the input offered was filtered out above: a group, a block/dns
+	// stub, a reserved tag, or nothing at all. Indexing here panicked
+	// ("index out of range [0] with length 0"), which the start path recovered
+	// into an alert carrying a Go stack trace -- unreadable for a user and
+	// useless for support. The selector that follows would fail validation
+	// anyway ("missing tags"), so this only changes how the failure reads.
+	//
+	// Deliberately unconditional. A WARP-only config also lands here, since the
+	// generated WARP endpoint is never added to `tags`; that configuration is
+	// already unusable for the same reason and should say so.
+	if len(tags) == 0 {
+		return fmt.Errorf("configuration has no usable outbound: every entry was a group, a block/dns stub, or a reserved tag")
 	}
 	defaultSelect := tags[0]
 
