@@ -3,6 +3,7 @@ package config
 import (
 	context "context"
 	"fmt"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"log"
 	"net"
 	"os"
@@ -24,7 +25,7 @@ func (s *server) ParseConfig(ctx context.Context, in *ParseConfigRequest) (resp 
 		resp = &ParseConfigResponse{Error: String(fmt.Sprintf("%v", recovered_err))}
 		err = nil
 	})
-	ctx = libbox.BaseContext(nil)
+	ctx = raynurltest.Context(libbox.BaseContext(nil))
 	config, err := ParseConfig(ctx, &ReadOptions{Path: in.Path}, in.Debug, nil, false)
 	if err != nil {
 		return &ParseConfigResponse{Error: String(err.Error())}, nil
@@ -45,7 +46,7 @@ func (s *server) GenerateFullConfig(ctx context.Context, in *GenerateConfigReque
 		resp = &GenerateConfigResponse{Error: String(fmt.Sprintf("%v", recovered_err))}
 		err = nil
 	})
-	ctx = libbox.BaseContext(nil)
+	ctx = raynurltest.Context(libbox.BaseContext(nil))
 	config, err := BuildConfigJson(ctx, DefaultHiddifyOptions(), &ReadOptions{Path: in.Path})
 	if err != nil {
 		return nil, err

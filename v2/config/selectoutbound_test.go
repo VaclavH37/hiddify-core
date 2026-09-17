@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"os"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestSelectOutboundSwitchesAndNotifies(t *testing.T) {
 		t.Fatalf("BuildConfig: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(include.Context(context.Background()))
+	ctx, cancel := context.WithCancel(raynurltest.Context(include.Context(context.Background())))
 	defer cancel()
 	instance, err := box.New(box.Options{Context: ctx, Options: *built})
 	if err != nil {

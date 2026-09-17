@@ -2,6 +2,7 @@ package hcore
 
 import (
 	"context"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 
 	box "github.com/sagernet/sing-box"
 
@@ -10,11 +11,11 @@ import (
 	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-box/experimental/clashapi"
 	"github.com/sagernet/sing-box/experimental/clashapi/trafficontrol"
-	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 )
 
 func NewService(ctx context.Context, options option.Options) (*daemon.StartedService, error) {
+	ctx = raynurltest.Context(ctx)
 
 	// ctx = filemanager.WithDefault(ctx, sWorkingPath, sTempPath, sUserID, sGroupID)
 	logInterface := LogInterface{}
@@ -28,7 +29,7 @@ func NewService(ctx context.Context, options option.Options) (*daemon.StartedSer
 			&hiddifyMainServiceManager{},
 		},
 	}
-	err := libbox.CheckConfigOptions(&options)
+	err := raynurltest.CheckConfigOptions(&options)
 	if err != nil {
 		return nil, err
 	}

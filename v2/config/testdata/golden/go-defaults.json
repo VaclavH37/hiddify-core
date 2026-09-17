@@ -299,7 +299,7 @@
       ],
       "tag": "lowest",
       "tolerance": 100,
-      "type": "urltest",
+      "type": "rayn_urltest",
       "url": "http://cp.cloudflare.com/",
       "urls": [
         "http://cp.cloudflare.com/",

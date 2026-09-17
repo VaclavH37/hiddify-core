@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"os"
 	"testing"
 	"time"
@@ -74,7 +75,7 @@ func TestRealProfileStartsTheBox(t *testing.T) {
 		var real []option.Outbound
 		for _, o := range probe.Outbounds {
 			switch o.Type {
-			case "selector", "urltest", "balancer", "direct", "block", "dns":
+			case "selector", "urltest", "rayn_urltest", "balancer", "direct", "block", "dns":
 				continue
 			}
 			real = append(real, o)
@@ -120,7 +121,7 @@ func TestRealProfileStartsTheBox(t *testing.T) {
 	}
 	built.Log = &option.LogOptions{Level: level, Timestamp: true}
 
-	ctx, cancel := context.WithCancel(include.Context(context.Background()))
+	ctx, cancel := context.WithCancel(raynurltest.Context(include.Context(context.Background())))
 	defer cancel()
 
 	instance, err := box.New(box.Options{Context: ctx, Options: *built})

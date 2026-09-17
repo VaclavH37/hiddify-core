@@ -6,9 +6,9 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"os"
 
-	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/batch"
 	SJ "github.com/sagernet/sing/common/json"
@@ -143,7 +143,7 @@ func patchConfigOptions(ctx context.Context, options *option.Options, name strin
 }
 
 func validateResult(ctx context.Context, options *option.Options, name string) (*option.Options, error) {
-	err := libbox.CheckConfigOptions(options)
+	err := raynurltest.CheckConfigOptions(options)
 	if err != nil {
 		return nil, fmt.Errorf("[%s] invalid sing-box config: %w", name, err)
 	}

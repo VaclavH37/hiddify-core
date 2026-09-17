@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"os"
 	"os/user"
 	"strconv"
@@ -76,5 +77,5 @@ func preRun(cmd *cobra.Command, args []string) {
 	// if len(configPaths) == 0 && len(configDirectories) == 0 {
 	// 	configPaths = append(configPaths, "config.json")
 	// }
-	globalCtx = include.Context(service.ContextWith(globalCtx, deprecated.NewStderrManager(log.StdLogger())))
+	globalCtx = raynurltest.Context(include.Context(service.ContextWith(globalCtx, deprecated.NewStderrManager(log.StdLogger()))))
 }

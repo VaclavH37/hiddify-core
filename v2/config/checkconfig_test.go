@@ -2,12 +2,12 @@ package config
 
 import (
 	"encoding/json"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -62,7 +62,7 @@ func TestRealProfileBuildsAValidConfig(t *testing.T) {
 	var real []option.Outbound
 	for _, o := range probe.Outbounds {
 		switch o.Type {
-		case "selector", "urltest", "balancer", "direct", "block", "dns":
+		case "selector", "urltest", "rayn_urltest", "balancer", "direct", "block", "dns":
 			continue
 		}
 		real = append(real, o)
@@ -94,7 +94,7 @@ func TestRealProfileBuildsAValidConfig(t *testing.T) {
 	// The same validation the shipped start path runs: stands up a real router,
 	// DNS and every outbound, so a removed or renamed option fails here exactly as
 	// it would on a device.
-	if err := libbox.CheckConfigOptions(built); err != nil {
+	if err := raynurltest.CheckConfigOptions(built); err != nil {
 		if strings.Contains(err.Error(), "is not included in this build") {
 			t.Skipf("needs the production build tags: %v", err)
 		}

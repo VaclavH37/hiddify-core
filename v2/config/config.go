@@ -2,8 +2,8 @@ package config
 
 import (
 	context "context"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 
-	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -30,7 +30,7 @@ func BuildConfigJson(ctx context.Context, configOpt *HiddifyOptions, input *Read
 	if err != nil {
 		return nil, err
 	}
-	if err := libbox.CheckConfigOptions(options); err != nil {
+	if err := raynurltest.CheckConfigOptions(options); err != nil {
 		return nil, err
 	}
 

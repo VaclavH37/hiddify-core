@@ -24,6 +24,7 @@ import (
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
 	"github.com/hiddify/hiddify-core/v2/hello"
 	hutils "github.com/hiddify/hiddify-core/v2/hutils"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -53,7 +54,7 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already started")
 		return nil
 	}
-	static.BaseContext = libbox.BaseContext(platformInterface)
+	static.BaseContext = raynurltest.Context(libbox.BaseContext(platformInterface))
 	static.debug = params.Debug
 	// Was plumbed from the app through platform/mobile all the way to here and
 	// then read by nothing. It is the client's credential now.

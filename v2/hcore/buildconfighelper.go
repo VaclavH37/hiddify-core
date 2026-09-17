@@ -8,6 +8,7 @@ import (
 	"github.com/hiddify/hiddify-core/v2/config"
 	"github.com/hiddify/hiddify-core/v2/db"
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 )
@@ -42,7 +43,7 @@ func BuildConfig(ctx context.Context, in *StartRequest) (*option.Options, error)
 }
 
 func (s *CoreService) Parse(ctx context.Context, in *ParseRequest) (*ParseResponse, error) {
-	return Parse(libbox.FromContext(ctx, nil), in)
+	return Parse(raynurltest.Context(libbox.FromContext(ctx, nil)), in)
 }
 
 func Parse(ctx context.Context, in *ParseRequest) (*ParseResponse, error) {
@@ -137,7 +138,7 @@ func ChangeHiddifySettings(in *ChangeHiddifySettingsRequest, insert bool) (*Core
 }
 
 func (s *CoreService) GenerateConfig(ctx context.Context, in *GenerateConfigRequest) (*GenerateConfigResponse, error) {
-	return GenerateConfig(libbox.FromContext(ctx, nil), in)
+	return GenerateConfig(raynurltest.Context(libbox.FromContext(ctx, nil)), in)
 }
 
 func GenerateConfig(ctx context.Context, in *GenerateConfigRequest) (*GenerateConfigResponse, error) {

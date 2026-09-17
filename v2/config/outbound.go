@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -25,7 +26,7 @@ func patchOutboundMux(base option.Outbound, configOpt HiddifyOptions, obj outbou
 }
 
 func patchOutboundTLSTricks(base option.Outbound, configOpt HiddifyOptions) option.Outbound {
-	if base.Type == C.TypeSelector || base.Type == C.TypeURLTest || base.Type == C.TypeBlock || base.Type == C.TypeDNS {
+	if base.Type == C.TypeSelector || base.Type == C.TypeURLTest || base.Type == raynurltest.Type || base.Type == C.TypeBlock || base.Type == C.TypeDNS {
 		return base
 	}
 	if isOutboundReality(base) {

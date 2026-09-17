@@ -1,13 +1,13 @@
 package config
 
 import (
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	C "github.com/sagernet/sing-box/constant"
-	"github.com/sagernet/sing-box/experimental/libbox"
 	"github.com/sagernet/sing-box/option"
 )
 
@@ -165,7 +165,7 @@ func TestBundledRuleSetFilesSatisfyConfig(t *testing.T) {
 	t.Chdir(work)
 
 	built := buildWithBlockAds(t, true)
-	if err := libbox.CheckConfigOptions(built); err != nil {
+	if err := raynurltest.CheckConfigOptions(built); err != nil {
 		// CheckConfigOptions stands up a real router, which needs the production
 		// build tags (with_clash_api, with_utls, …). Skip rather than fail when they
 		// are absent, so a bare `go test ./v2/config/` stays green — the tagged

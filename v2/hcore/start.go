@@ -8,6 +8,7 @@ import (
 	"github.com/hiddify/hiddify-core/v2/config"
 	"github.com/hiddify/hiddify-core/v2/db"
 	hcommon "github.com/hiddify/hiddify-core/v2/hcommon"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	service_manager "github.com/hiddify/hiddify-core/v2/service_manager"
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -84,6 +85,9 @@ func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfo
 	defer config.DeferPanicToError("startmobile", func(recovered_err error) {
 		coreResponse, err = errorWrapper(MessageType_UNEXPECTED_ERROR, recovered_err)
 	})
+	// The built config names the lowest group by its own key; every context
+	// this start derives must be able to decode and construct it.
+	ctx = raynurltest.Context(ctx)
 	static.lock.Lock()
 	defer static.lock.Unlock()
 

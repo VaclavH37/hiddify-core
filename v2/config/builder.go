@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hiddify/hiddify-core/v2/hutils"
+	"github.com/hiddify/hiddify-core/v2/raynurltest"
 	mDNS "github.com/miekg/dns"
 	C "github.com/sagernet/sing-box/constant"
 	sdns "github.com/sagernet/sing-box/dns"
@@ -204,7 +205,7 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		// collision waiting to happen. C.TypeBalancer is hiddify's own group type
 		// and was absent here, so a balancer arriving from a subscription fell to
 		// `default` and was enrolled as though it were an exit.
-		case C.TypeSelector, C.TypeURLTest, C.TypeBalancer:
+		case C.TypeSelector, C.TypeURLTest, C.TypeBalancer, raynurltest.Type:
 			continue
 		case C.TypeCustom:
 			continue
@@ -324,8 +325,14 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 	// `InterruptExistConnections: false`: automatic re-selection must not drop live
 	// connections — existing ones ride the previous exit to completion; only new
 	// connections use the newly selected one. Manual switches via `select` still interrupt.
+	//
+	// The type is this repo's corrected copy of that group (v2/raynurltest). The
+	// imported fork stores a failed probe as a 65535 ms sentinel, and the stock
+	// group's Select adds the tolerance to it in uint16, which wraps: a dead exit
+	// ranked as 99 ms won every round. The copy ranks only real measurements and
+	// leaves a dead exit on the next new connection.
 	urlTest := option.Outbound{
-		Type: C.TypeURLTest,
+		Type: raynurltest.Type,
 		Tag:  OutboundURLTestTag,
 		Options: &option.URLTestOutboundOptions{
 			Outbounds:                 tags,
