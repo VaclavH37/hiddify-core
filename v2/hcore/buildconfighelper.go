@@ -36,6 +36,13 @@ func BuildConfig(ctx context.Context, in *StartRequest) (*option.Options, error)
 
 		// Log(LogLevel_DEBUG, LogType_CORE, "Building config ", string(hcontent))
 		// Log(LogLevel_DEBUG, LogType_CORE, "Building config ")
+
+		// A registered platform interface means the tun is the platform's
+		// (Network Extension, VpnService): the same test StartService uses to
+		// hand that interface to sing-box. The builder needs to know, because
+		// binding dials to a default interface only works when sing-box owns the
+		// tun (config/platform_tun.go).
+		ctx = config.WithPlatformTun(ctx, static.globalPlatformInterface != nil)
 		return config.BuildConfig(ctx, static.HiddifyOptions, readOpt)
 	}
 	return config.ReadSingOptions(ctx, readOpt)

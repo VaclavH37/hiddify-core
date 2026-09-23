@@ -32,7 +32,7 @@ CRONET_GO_MOD_VERSION = $(shell go list -m -f '{{.Version}}' github.com/sagernet
 CRONET_GO_REF = $(or $(CRONET_GO_MOD_VERSION),$(CRONET_GO_VERSION))
 TAGS=with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_grpc,with_awg,tfogo_checklinkname0,with_naive_outbound,with_conntrack
 IOS_ADD_TAGS=with_dhcp,with_low_memory,with_purego
-MACOS_ADD_TAGS=with_dhcp
+MACOS_ADD_TAGS=with_dhcp,with_purego
 WINDOWS_ADD_TAGS=with_purego
 
 # Opt-in build tags, appended to $(TAGS) rather than replacing it:
@@ -261,19 +261,29 @@ linux-custom: prepare  install_cronet
 	chmod +x $(BINDIR)/$(CLINAME)
 	make webui
 
-macos-amd64:
-	env GOOS=darwin GOARCH=amd64 CGO_CFLAGS="-mmacosx-version-min=10.11 -O2" CGO_LDFLAGS="-mmacosx-version-min=10.11 -O2 -lpthread" CGO_ENABLED=1 go build -trimpath -tags $(ALL_TAGS),$(MACOS_ADD_TAGS) -buildmode=c-shared -o $(BINDIR)/$(LIBNAME)-amd64.dylib ./platform/desktop
-macos-arm64:
-	env GOOS=darwin GOARCH=arm64 CGO_CFLAGS="-mmacosx-version-min=10.11 -O2" CGO_LDFLAGS="-mmacosx-version-min=10.11 -O2 -lpthread" CGO_ENABLED=1 go build -trimpath -tags $(ALL_TAGS),$(MACOS_ADD_TAGS) -buildmode=c-shared -o $(BINDIR)/$(LIBNAME)-arm64.dylib ./platform/desktop
-	
-macos: prepare macos-amd64 macos-arm64 
-	
-	lipo -create $(BINDIR)/$(LIBNAME)-amd64.dylib $(BINDIR)/$(LIBNAME)-arm64.dylib -output $(BINDIR)/$(LIBNAME).dylib
-	cp $(BINDIR)/$(LIBNAME).dylib ./$(LIBNAME).dylib 
-	mv $(BINDIR)/$(LIBNAME)-arm64.h $(BINDIR)/desktop.h 
-	# env GOOS=darwin GOARCH=amd64 CGO_CFLAGS="-mmacosx-version-min=10.15" CGO_LDFLAGS="-mmacosx-version-min=10.15" CGO_LDFLAGS="bin/$(LIBNAME).dylib"  CGO_ENABLED=1 $(GOBUILDSRV)  -o $(BINDIR)/$(CLINAME) ./cmd/bydll
-	# rm ./$(LIBNAME).dylib
-	# chmod +x $(BINDIR)/$(CLINAME)
+# The Mac client ships through the Mac App Store as a sandboxed app plus a
+# packet-tunnel extension, so its core is a gomobile framework like the iOS one,
+# not a c-shared dylib loaded over FFI. A sandboxed process cannot open a utun,
+# and the dylib path had no other way to get one. This replaces the old
+# macos-amd64 / macos-arm64 / lipo targets and their hiddify-core.dylib.
+#
+# `-target macos` emits one universal slice (macos-arm64_x86_64).
+# `-macosversion=12.0` is the Go 1.25 floor; gomobile's default is 10.15, and the
+# old dylib build said 10.11, which Go has not supported for years.
+#
+# Tags are iOS's minus with_low_memory. That tag exists for the 50 MB cap iOS
+# puts on a packet-tunnel provider (libbox.SetMemoryLimit applies it only on
+# iOS); macOS has no such cap, and upstream sing-box drops it for macOS in the
+# same way (-tags-not-macos=with_low_memory). with_purego is kept because
+# upstream Hiddify added it to the iOS bind as a link fix (a1f9eda), and this is
+# the same gomobile link.
+#
+# A separate artefact from the iOS framework on purpose: macOS work never
+# rebuilds or re-tags the tested iOS core. The module name is still RaynCore, so
+# the Swift shared between the two targets says `import RaynCore` either way.
+macos: lib_install
+	rm -rf $(BINDIR)/macos
+	gomobile bind -v -target macos -macosversion=12.0 -libname=rayn-core -tags=$(ALL_TAGS),$(MACOS_ADD_TAGS) -trimpath -ldflags="$(LDFLAGS)" -o $(BINDIR)/macos/RaynCore.xcframework github.com/sagernet/sing-box/experimental/libbox ./platform/mobile
 
 prepare: 
 	go mod tidy

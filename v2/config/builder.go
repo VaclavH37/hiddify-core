@@ -89,10 +89,16 @@ func BuildConfig(ctx context.Context, hopts *HiddifyOptions, inputOpt *ReadOptio
 		options.Route = input.Route
 	}
 
+	// Whether the tun is the platform's (Network Extension, VpnService) rather
+	// than one sing-box opens itself. See platform_tun.go.
+	managed := platformTun(ctx)
+
 	setExperimental(&options, hopts)
 
 	setLog(&options, hopts)
-	setInbound(&options, hopts)
+	if err := setInbound(&options, hopts, managed); err != nil {
+		return nil, err
+	}
 	staticIPs := make(map[string][]string)
 	// Bootstrap IPs for the CN-direct DoH servers in setDns() so they have a
 	// known-good resolution path without depending on UDP/53. doh.pub is the
@@ -124,7 +130,7 @@ func BuildConfig(ctx context.Context, hopts *HiddifyOptions, inputOpt *ReadOptio
 		return nil, err
 	}
 
-	if err := setRoutingOptions(&options, hopts); err != nil {
+	if err := setRoutingOptions(&options, hopts, managed); err != nil {
 		return nil, err
 	}
 
@@ -576,7 +582,7 @@ func tunnelIPv6Enabled(hopt *HiddifyOptions) bool {
 	return true
 }
 
-func setInbound(options *option.Options, hopt *HiddifyOptions) {
+func setInbound(options *option.Options, hopt *HiddifyOptions, managed bool) error {
 	// Distinct questions, deliberately distinct variables: what the tunnel
 	// captures vs what the local listener can bind to.
 	tunIPv6 := tunnelIPv6Enabled(hopt)
@@ -605,6 +611,16 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 		opts.Address = []netip.Prefix{netip.MustParsePrefix(TunAddress4)}
 		if tunIPv6 {
 			opts.Address = append(opts.Address, netip.MustParsePrefix(TunAddress6))
+		}
+		// Test builds only; see TestRouteExcludeAddress. A malformed prefix fails
+		// the build rather than being dropped, because the one thing it protects
+		// is the remote session a tester is using to watch the tunnel come up.
+		for _, raw := range hopt.TestRouteExcludeAddress {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil {
+				return fmt.Errorf("test-route-exclude-address %q: %w", raw, err)
+			}
+			opts.RouteExcludeAddress = append(opts.RouteExcludeAddress, prefix)
 		}
 
 		options.Inbounds = append(options.Inbounds, tunInbound)
@@ -666,7 +682,7 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 				},
 			)
 		}
-		if (C.IsLinux || C.IsDarwin) && !C.IsAndroid && hopt.RedirectPort > 0 {
+		if hostPlatform.redirectInbound(hopt.RedirectPort, managed) {
 			options.Inbounds = append(
 				options.Inbounds,
 				option.Inbound{
@@ -697,9 +713,10 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 			)
 		}
 	}
+	return nil
 }
 
-func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
+func setRoutingOptions(options *option.Options, hopt *HiddifyOptions, managed bool) error {
 	dnsRules := []option.DefaultDNSRule{}
 	routeRules := []option.Rule{}
 	rulesets := []option.RuleSet{}
@@ -1349,7 +1366,7 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions) error {
 	options.Route = &option.RouteOptions{
 		Rules:               routeRules,
 		Final:               OutboundMainDetour,
-		AutoDetectInterface: (!C.IsAndroid && !C.IsIos) && (hopt.EnableTun || hopt.EnableTunService),
+		AutoDetectInterface: hostPlatform.autoDetectInterface(managed, hopt.EnableTun || hopt.EnableTunService),
 		// default_domain_resolver must resolve without the tunnel — it is what
 		// resolves outbound server addresses in the first place. That rules out
 		// dns-remote by construction, and inside the GFW every direct-path

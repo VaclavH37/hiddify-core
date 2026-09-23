@@ -70,6 +70,19 @@ type InboundOptions struct {
 	MTU              uint32 `json:"mtu,omitempty"`
 	StrictRoute      bool   `json:"strict-route,omitempty"`
 	TUNStack         string `json:"tun-implementation,omitempty"`
+	// TestRouteExcludeAddress keeps these prefixes out of the tun (sing-box
+	// route_exclude_address; excludedRoutes under a Network Extension).
+	//
+	// TEST BUILDS ONLY. It exists so a tunnel can be brought up on a remote test
+	// Mac without cutting the screen-sharing session used to watch it: once the
+	// tun claims the default route, the replies to that session go into the
+	// tunnel and the session drops. The client sends it only from a diagnostics
+	// build given RAYN_TEST_ROUTE_EXCLUDE (config_option_repository.dart), and a
+	// shipped build always sends an empty list.
+	//
+	// Deliberately NOT overridable: a subscription must never be able to punch
+	// holes in the tunnel.
+	TestRouteExcludeAddress []string `json:"test-route-exclude-address,omitempty"`
 }
 
 type URLTestOptions struct {
