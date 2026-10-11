@@ -389,6 +389,17 @@ func ruleSetRoles(t *testing.T, built *option.Options) map[string]*ruleSetRole {
 				if len(raw.RuleSet) == 0 {
 					continue
 				}
+				// An inverted set inside an AND reject only spares its members from
+				// that reject (the tunnel IPv6 refusal spares direct-regional-ips).
+				// That gives the set no role; the rules its members fall through to
+				// decide what happens to them.
+				if raw.Invert && logical.Mode == C.LogicalTypeAnd && !logical.Invert &&
+					sub.Type != C.RuleTypeLogical && logical.Action == C.RuleActionTypeReject {
+					for _, tag := range raw.RuleSet {
+						role(tag)
+					}
+					continue
+				}
 				if logical.Mode != C.LogicalTypeAnd || logical.Invert || sub.Type == C.RuleTypeLogical || raw.Invert {
 					t.Fatalf("route rule %d uses rule-sets in a shape ruleSetRoles does not know", i)
 				}

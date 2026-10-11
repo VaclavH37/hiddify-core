@@ -786,6 +786,85 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions, managed bo
 
 	dnsRules = append(dnsRules, forceDirectRules...)
 
+	// Refuse IPv6 bound for the tunnel while the app is still connecting.
+	//
+	// The exits carry no IPv6, and our DNS never answers AAAA (dns.strategy is
+	// ipv4_only), so IPv6 reaches the tun only when an app got the address some
+	// other way: a literal, its own resolver, or a device setting such as Android
+	// Private DNS. One phone sent 1,232 connections to the poisoned sentinel
+	// [2001::1] in two days like that. None can succeed past the hub, and the
+	// hub's refusal comes too late: the sniff below reads the app's first bytes,
+	// which completes its handshake before the connection is even routed, so
+	// Happy Eyeballs has already chosen IPv6 and the app retries the dead address
+	// instead of falling back. Refused here, the app gets a TCP reset while it is
+	// still connecting and moves to its IPv4 address.
+	//
+	// It must be the FIRST route rule. sing-box decides before the handshake
+	// (Router.PreMatch) only on rules ahead of the first sniff action -- at the
+	// sniff it stops and lets the connection through -- so a reject placed later
+	// fires after the app believes it is connected. Nothing has been sniffed yet,
+	// so the rule sees addresses and ports only. It spares:
+	//   - private, link-local and multicast addresses (the tun's own IPv6 DNS
+	//     address among them), none of which ever reaches an exit;
+	//   - direct-regional-ips, whose IPv6 goes direct as it did before;
+	//   - port 53, so DNS carried over IPv6 still reaches hijack-dns.
+	// An IPv6 connection to a name only a domain rule would send direct is refused
+	// as well; the app's IPv4 retry is then sniffed and routed by name as usual.
+	//
+	// Leak-safe only because the tun still claims ::/0: a refused connection goes
+	// nowhere, and the IPv4 fallback takes the normal path. Never get the same
+	// effect by dropping IPv6 from the tun -- on a network with native IPv6 that
+	// sends it straight out, outside the tunnel. If the exits ever carry IPv6,
+	// this rule and the DNS strategy change together.
+	routeRules = append(routeRules, option.Rule{
+		Type: C.RuleTypeLogical,
+		LogicalOptions: option.LogicalRule{
+			RawLogicalRule: option.RawLogicalRule{
+				Mode: C.LogicalTypeAnd,
+				Rules: []option.Rule{
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{Inbound: []string{InboundTUNTag}},
+						},
+					},
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{IPVersion: 6},
+						},
+					},
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{IPIsPrivate: true, Invert: true},
+						},
+					},
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{RuleSet: []string{"direct-regional-ips"}, Invert: true},
+						},
+					},
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{Port: []uint16{53}, Invert: true},
+						},
+					},
+				},
+			},
+			RuleAction: option.RuleAction{
+				Action: C.RuleActionTypeReject,
+				// A reset, not a silent drop: a drop leaves the app waiting out its
+				// connect timeout, which is the hang this rule exists to remove.
+				RejectOptions: option.RejectActionOptions{
+					Method: C.RuleActionRejectMethodDefault,
+				},
+			},
+		},
+	})
+
 	// Explicit sniffer list, deliberately WITHOUT "quic".
 	//
 	// The default packet sniffers include QUICClientHello, which returns

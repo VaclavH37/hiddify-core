@@ -18,6 +18,21 @@ func findRule(rules []option.Rule, match func(option.Rule) bool) int {
 	return -1
 }
 
+// isSelfLoopGuard picks the guard out by its source condition. "The first
+// logical reject" no longer identifies it: the tunnel IPv6 refusal is also a
+// logical reject, and it comes first.
+func isSelfLoopGuard(rule option.Rule) bool {
+	if rule.Type != C.RuleTypeLogical || rule.LogicalOptions.Action != C.RuleActionTypeReject {
+		return false
+	}
+	for _, sub := range rule.LogicalOptions.Rules {
+		if len(sub.DefaultOptions.SourceIPCIDR) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func routesTo(rule option.Rule, outbound string) bool {
 	switch rule.Type {
 	case C.RuleTypeDefault:
@@ -47,9 +62,7 @@ func TestSelfLoopGuard(t *testing.T) {
 	}
 	rules := built.Route.Rules
 
-	guardAt := findRule(rules, func(r option.Rule) bool {
-		return r.Type == C.RuleTypeLogical && r.LogicalOptions.Action == C.RuleActionTypeReject
-	})
+	guardAt := findRule(rules, isSelfLoopGuard)
 
 	// Windows-only by design: the loop was only ever reproduced there, and the
 	// rule refuses traffic a Linux host might be forwarding on purpose. Asserted
@@ -61,7 +74,7 @@ func TestSelfLoopGuard(t *testing.T) {
 		t.Skipf("guard is Windows-only; nothing to assert on %s", runtime.GOOS)
 	}
 	if guardAt == -1 {
-		t.Fatal("no logical reject rule in the built config; the self-loop guard is missing")
+		t.Fatal("no source-matching reject rule in the built config; the self-loop guard is missing")
 	}
 
 	t.Run("sits immediately after hijack-dns", func(t *testing.T) {

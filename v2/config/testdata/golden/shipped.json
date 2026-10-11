@@ -395,6 +395,31 @@
     ],
     "rules": [
       {
+        "action": "reject",
+        "mode": "and",
+        "rules": [
+          {
+            "inbound": "tun-in"
+          },
+          {
+            "ip_version": 6
+          },
+          {
+            "invert": true,
+            "ip_is_private": true
+          },
+          {
+            "invert": true,
+            "rule_set": "direct-regional-ips"
+          },
+          {
+            "invert": true,
+            "port": 53
+          }
+        ],
+        "type": "logical"
+      },
+      {
         "action": "sniff",
         "sniffer": [
           "tls",
