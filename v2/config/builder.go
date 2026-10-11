@@ -1287,6 +1287,16 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions, managed bo
 		// unconditionally correct.
 		"pki.goog",
 		"l.google.com",
+		// Google's China-specific API host. Phones built for the Chinese market
+		// declare a feature that points Google Play services at googleapis.cn
+		// instead of googleapis.com, so a China-bought phone's Play Store
+		// downloads depend on it. It is not served inside China: upstream's
+		// google list tags google.cn, gstatic.cn and the other CN-served .cn
+		// names @cn, and googleapis.cn alone it does not. Our .cn catch-all
+		// below sent it direct, through a CN resolver, and Play updates on
+		// such a phone never finished, while clients that proxy all of Google
+		// worked.
+		"googleapis.cn",
 	}
 	dnsRules = append(dnsRules, option.DefaultDNSRule{
 		RawDefaultDNSRule: option.RawDefaultDNSRule{DomainSuffix: googleRemoteSuffixes},
@@ -1399,11 +1409,30 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions, managed bo
 				},
 			},
 		})
+		// Same Google exclusion as the rule-set rule above, and for the same
+		// reason: a Google name under the region suffix (googleapis.cn) falls
+		// through to `resolve` and the tunnel instead of leaving direct. Its DNS
+		// needs no change here -- the googleRemoteSuffixes DNS rule precedes the
+		// two .<region> DNS rules above and answers it from the remote resolver.
 		routeRules = append(routeRules, option.Rule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultRule{
-				RawDefaultRule: option.RawDefaultRule{
-					DomainSuffix: []string{"." + hopt.Region},
+			Type: C.RuleTypeLogical,
+			LogicalOptions: option.LogicalRule{
+				RawLogicalRule: option.RawLogicalRule{
+					Mode: C.LogicalTypeAnd,
+					Rules: []option.Rule{
+						{
+							Type: C.RuleTypeDefault,
+							DefaultOptions: option.DefaultRule{
+								RawDefaultRule: option.RawDefaultRule{DomainSuffix: []string{"." + hopt.Region}},
+							},
+						},
+						{
+							Type: C.RuleTypeDefault,
+							DefaultOptions: option.DefaultRule{
+								RawDefaultRule: option.RawDefaultRule{DomainSuffix: googleRemoteSuffixes, Invert: true},
+							},
+						},
+					},
 				},
 				RuleAction: option.RuleAction{
 					Action: C.RuleActionTypeRoute,

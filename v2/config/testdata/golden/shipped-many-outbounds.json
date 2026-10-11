@@ -55,7 +55,8 @@
           "ggpht.com",
           "ytimg.com",
           "pki.goog",
-          "l.google.com"
+          "l.google.com",
+          "googleapis.cn"
         ],
         "rewrite_ttl": 3600,
         "server": "dns-remote"
@@ -536,7 +537,8 @@
               "ggpht.com",
               "ytimg.com",
               "pki.goog",
-              "l.google.com"
+              "l.google.com",
+              "googleapis.cn"
             ],
             "invert": true
           }
@@ -544,8 +546,30 @@
         "type": "logical"
       },
       {
-        "domain_suffix": ".cn",
-        "outbound": "direct §hide§"
+        "mode": "and",
+        "outbound": "direct §hide§",
+        "rules": [
+          {
+            "domain_suffix": ".cn"
+          },
+          {
+            "domain_suffix": [
+              "gstatic.com",
+              "googleapis.com",
+              "googleusercontent.com",
+              "googlevideo.com",
+              "googletagmanager.com",
+              "google-analytics.com",
+              "ggpht.com",
+              "ytimg.com",
+              "pki.goog",
+              "l.google.com",
+              "googleapis.cn"
+            ],
+            "invert": true
+          }
+        ],
+        "type": "logical"
       },
       {
         "action": "resolve",
