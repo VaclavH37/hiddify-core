@@ -545,24 +545,41 @@ func setLog(options *option.Options, opt *HiddifyOptions) {
 
 // isIPv6Supported reports whether the HOST has a usable IPv6 stack. It says
 // nothing about whether the tunnel can carry IPv6 — see tunnelIPv6Enabled.
+//
+// Probed by binding the IPv6 loopback, which is also exactly what setInbound's
+// local listener does with the answer. This used to be
+// net.ResolveIPAddr("ip6", "::1"), which parses the literal without asking the
+// OS anything and so returned true on every host.
 func isIPv6Supported() bool {
 	if C.IsIos || C.IsDarwin {
 		return true
 	}
-	_, err := net.ResolveIPAddr("ip6", "::1")
-	return err == nil
+	conn, err := net.ListenPacket("udp6", "[::1]:0")
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }
+
+// probeEgressIPv6 is hostEgressIPv6, swappable so tests can decide the tun's
+// address list without depending on the adapters of whichever host runs them.
+var probeEgressIPv6 = hostEgressIPv6
 
 // tunnelIPv6Enabled reports whether the TUN inbound claims an IPv6 address, and
 // therefore whether IPv6 traffic is captured by the tunnel at all rather than
 // leaving over the host's native route.
 //
-// Two conditions, only the first of which is live today:
+// Three conditions, the first two of which are live today:
 //
-//  1. the host has a usable IPv6 stack, and
-//  2. the exit can actually carry IPv6 to the internet.
+//  1. the host has a usable IPv6 stack,
+//  2. direct dials can hold IPv6 to the egress adapter (hostEgressIPv6), and
+//  3. the exit can actually carry IPv6 to the internet.
 //
-// (2) is assumed true. When hub IPv6 egress becomes real, gate it HERE — this
+// (2) exists because claiming IPv6 when it fails turns any IPv6 sent `direct`
+// into a loop that ends in runtime.checkmcount; see hostEgressIPv6.
+//
+// (3) is assumed true. When hub IPv6 egress becomes real, gate it HERE — this
 // is deliberately the single place that decides, so the policy cannot drift
 // from the address assignment in setInbound. The likely shape is a
 // `TunnelIPv6` field on RouteOptions fed from the subscription (the hub knows
@@ -577,7 +594,10 @@ func tunnelIPv6Enabled(hopt *HiddifyOptions) bool {
 	if !isIPv6Supported() {
 		return false
 	}
-	// Condition (2): hub IPv6 egress. Unconditional for now.
+	if !probeEgressIPv6() {
+		return false
+	}
+	// Condition (3): hub IPv6 egress. Unconditional for now.
 	_ = hopt
 	return true
 }
@@ -831,12 +851,15 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions, managed bo
 	// packet shares one property no legitimate one does: a source that is not
 	// the tun.
 	//
-	// IPv4 ONLY, and that is load-bearing. The tun's IPv6 is a ULA, and source
-	// selection will not offer a ULA for a global destination, so real IPv6
-	// leaves the host carrying its GLOBAL address — a capture shows
-	// 240e:312:...  ->  [2603:1040:5:8::]:443, an ordinary connection that this
-	// rule would reject if it were family-agnostic. No IPv6 loop is reachable
-	// today (hub and both bootstrap resolvers are IPv4); revisit if that changes.
+	// IPv4 ONLY, and that is load-bearing. The tun's IPv6 is a ULA, and on a
+	// host with a global IPv6 address source selection prefers that address for
+	// a global destination, so real IPv6 enters the tun carrying the GLOBAL
+	// address — a capture shows 240e:312:...  ->  [2603:1040:5:8::]:443, an
+	// ordinary connection that this rule would reject if it were
+	// family-agnostic. A host with no global address does send from the ULA,
+	// and that is where an IPv6 loop WAS reachable (2026-10): IPv6 disabled on
+	// the egress adapter, so direct dials could not hold IPv6 to it. That door
+	// is closed in tunnelIPv6Enabled, which claims no tun IPv6 there, not here.
 	//
 	// WINDOWS ONLY, scoped to the evidence rather than to the capability gap.
 	// Mobile has PlatformInterface.MyInterfaceAddress / RegisterMyInterface and
