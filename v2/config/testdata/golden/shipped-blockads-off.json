@@ -398,6 +398,23 @@
         "outbound": "direct §hide§",
         "rules": [
           {
+            "ip_is_private": true
+          },
+          {
+            "invert": true,
+            "ip_cidr": [
+              "172.19.0.0/28",
+              "fdfe:dcba:9876::/126"
+            ]
+          }
+        ],
+        "type": "logical"
+      },
+      {
+        "mode": "and",
+        "outbound": "direct §hide§",
+        "rules": [
+          {
             "rule_set": [
               "direct-private",
               "direct-apple",

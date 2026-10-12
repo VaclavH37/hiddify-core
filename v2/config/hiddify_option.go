@@ -111,6 +111,9 @@ type RouteOptions struct {
 	// IPv6 address is decided by tunnelIPv6Enabled(), from host probes. The client no
 	// longer sends `ipv6-mode`; an older client that still does is harmless,
 	// since encoding/json ignores unknown fields.
+	// BypassLAN is ignored: private destinations always go direct (see the LAN
+	// rule in setRoutingOptions). Kept so an older client that still sends it
+	// decodes unchanged.
 	BypassLAN              bool `json:"bypass-lan,omitempty"`
 	AllowConnectionFromLAN bool `json:"allow-connection-from-lan,omitempty"`
 	// BlockQuic suppresses tunnelled HTTP/3: rejects UDP/443 that reaches the tunnel and

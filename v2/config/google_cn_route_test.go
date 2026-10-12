@@ -71,7 +71,7 @@ func newRoutingProbe(t *testing.T, built *option.Options) *routingProbe {
 // The destination address is outside every direct IP set, so only the name can
 // send it direct.
 func (p *routingProbe) outbound(domain string) string {
-	metadata := adapter.InboundContext{
+	return p.routeOf(adapter.InboundContext{
 		Inbound:     InboundTUNTag,
 		Network:     N.NetworkTCP,
 		IPVersion:   4,
@@ -79,7 +79,33 @@ func (p *routingProbe) outbound(domain string) string {
 		Destination: M.ParseSocksaddr("142.251.1.1:443"),
 		Protocol:    C.ProtocolTLS,
 		Domain:      domain,
+	})
+}
+
+// fromTun is a connection the tun hands the router after sniffing: from the
+// tun's own address in the destination's family, with whatever the sniffer
+// recognised as protocol ("" when nothing).
+func fromTun(network, destination, protocol string) adapter.InboundContext {
+	dest := M.ParseSocksaddr(destination)
+	metadata := adapter.InboundContext{
+		Inbound:     InboundTUNTag,
+		Network:     network,
+		IPVersion:   4,
+		Source:      M.ParseSocksaddr("172.19.0.1:50000"),
+		Destination: dest,
+		Protocol:    protocol,
 	}
+	if dest.Addr.Is6() {
+		metadata.IPVersion = 6
+		metadata.Source = M.ParseSocksaddr("[fdfe:dcba:9876::1]:50000")
+	}
+	return metadata
+}
+
+// routeOf walks the route rules the way the router does after sniffing and
+// returns the first decision: an outbound tag, "reject" or "hijack-dns", or
+// the final outbound when nothing matches. Sniff and resolve are non-final.
+func (p *routingProbe) routeOf(metadata adapter.InboundContext) string {
 	for _, r := range p.route {
 		metadata.ResetRuleCache()
 		if !r.Match(&metadata) {

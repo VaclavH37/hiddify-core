@@ -1022,25 +1022,67 @@ func setRoutingOptions(options *option.Options, hopt *HiddifyOptions, managed bo
 	// 	},
 	// },	}
 
-	if hopt.BypassLAN {
-		routeRules = append(
-			routeRules,
-			option.Rule{
-				Type: C.RuleTypeDefault,
-				DefaultOptions: option.DefaultRule{
-					RawDefaultRule: option.RawDefaultRule{
-						IPIsPrivate: true,
+	// Local-network destinations leave directly, always.
+	//
+	// Nothing else here does it. `direct-private` is upstream geosite-private, a
+	// list of local NAMES (localhost, single labels, .lan, .local, .home.arpa,
+	// .internal) with no addresses in it, and no bundled set holds a private
+	// range. Without this rule every private destination fell through to the
+	// tunnel, where the hub blackholes geoip:private:
+	//   - on Android the VPN claims 0.0.0.0/0 and ::/0 and excludes nothing, so
+	//     ALL of the LAN went to the hub (casting, printers, NAS, a router's admin
+	//     page, phone-to-PC links);
+	//   - on Windows the on-link subnet stays on the physical adapter, but every
+	//     other private range -- an ISP modem behind the home router, other
+	//     10/8 and 172.16/12 networks -- went to the hub.
+	// The `bypass-lan` option used to add this rule when switched on. It was off
+	// by default upstream and is hard-coded off in the client, whose comments
+	// assumed direct-private covered RFC1918. The option is now ignored.
+	//
+	// Placement. After hijack-dns, so DNS sent to a LAN address (the router) is
+	// still answered by our resolver rather than leaving with the rest of the
+	// LAN; after the Windows self-loop guard, so a re-injected packet is refused
+	// before anything can send it direct. Route-only: an address condition in a
+	// DNS rule makes sing-box resolve every query to test it, the CN-resolver
+	// leak documented on the China-direct DNS rules.
+	//
+	// The tun's own subnets are carved out. Nothing legitimate is addressed to
+	// them except DNS, already hijacked above, and dialling them direct would
+	// send those addresses out of the physical adapter.
+	routeRules = append(routeRules, option.Rule{
+		Type: C.RuleTypeLogical,
+		LogicalOptions: option.LogicalRule{
+			RawLogicalRule: option.RawLogicalRule{
+				Mode: C.LogicalTypeAnd,
+				Rules: []option.Rule{
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{IPIsPrivate: true},
+						},
 					},
-					RuleAction: option.RuleAction{
-						Action: C.RuleActionTypeRoute,
-						RouteOptions: option.RouteActionOptions{
-							Outbound: OutboundDirectTag,
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultRule{
+							RawDefaultRule: option.RawDefaultRule{
+								IPCIDR: []string{
+									netip.MustParsePrefix(TunAddress4).Masked().String(),
+									netip.MustParsePrefix(TunAddress6).Masked().String(),
+								},
+								Invert: true,
+							},
 						},
 					},
 				},
 			},
-		)
-	}
+			RuleAction: option.RuleAction{
+				Action: C.RuleActionTypeRoute,
+				RouteOptions: option.RouteActionOptions{
+					Outbound: OutboundDirectTag,
+				},
+			},
+		},
+	})
 
 	// for _, rule := range opt.Rules {
 	// 	routeRule := rule.MakeRule()
