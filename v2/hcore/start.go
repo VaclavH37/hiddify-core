@@ -165,6 +165,7 @@ func StartService(ctx context.Context, in *StartRequest) (coreResponse *CoreInfo
 		return errorWrapper(MessageType_START_SERVICE, err)
 	}
 	static.StartedService = instance
+	logEgressRouting()
 	// Compiled out unless built with -tags raynconfigdump; no longer gated on
 	// static.debug, which a user of a shipped build could set from Settings.
 	dumpGoroutines(sWorkingPath, "goroutine-start.log")
