@@ -12,13 +12,11 @@ func (s *CoreService) Close(ctx context.Context, closeReq *CloseRequest) (*hcomm
 	if closeReq == nil {
 		return nil, nil
 	}
-	mode := closeReq.Mode
-	if grpcServer[mode] == nil {
-		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already stoped")
-		return nil, nil
-	}
-
-	CloseGrpcServer(mode)
+	// No pre-check of grpcServer here. It read the map without mu, and Setup now
+	// replaces a dead server under mu, so the read could race that write into
+	// Go's fatal "concurrent map read and map write". CloseGrpcServer checks for
+	// absence itself, under the lock.
+	CloseGrpcServer(closeReq.Mode)
 	return &hcommon.Empty{}, nil
 }
 

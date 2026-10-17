@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 
@@ -50,9 +51,8 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 	startDebugHTTPServer(params.Debug)
 	mu.Lock()
 	defer mu.Unlock()
-	if grpcServer[params.Mode] != nil {
-		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already started")
-		return nil
+	if srv := grpcServer[params.Mode]; srv != nil {
+		return keepOrReviveLocked(srv, params.Listen, params.Mode)
 	}
 	static.BaseContext = raynurltest.Context(libbox.BaseContext(platformInterface))
 	static.debug = params.Debug
@@ -465,19 +465,134 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 	Log(LogLevel_DEBUG, LogType_CORE, fmt.Sprintf("grpcServer started on %s\n", listenAddressG))
 	log.Info("Server listening on %s", listenAddressG)
 
-	// Run the server in a goroutine
-	go func() {
-		defer config.DeferPanicToError("grpcsetup", func(err error) {
-			Log(LogLevel_FATAL, LogType_CORE, err.Error())
-			<-time.After(5 * time.Second)
-		})
-		if err := grpcServer[mode].Serve(lis); err != nil {
-			Log(LogLevel_DEBUG, LogType_CORE, fmt.Sprintf("failed to serve: %v\n", err))
-		}
-		Log(LogLevel_DEBUG, LogType_CORE, "Server stopped")
-	}()
+	// Handed to the goroutine as a value. It used to re-read grpcServer[mode]
+	// there, unlocked, by which time the entry could be gone or replaced.
+	srv := grpcServer[mode]
+	go serveAndReap(srv, lis, mode)
 
-	return grpcServer[mode], nil
+	return srv, nil
+}
+
+// serveAndReap serves until the server stops, then removes its own map entry.
+//
+// Without the removal, a server whose Serve had returned stayed registered,
+// and the already-started guards handed that corpse back to every later Setup:
+// connection refused for the life of the process.
+//
+// The entry is removed only if it is still THIS server. A replacement started
+// while this one was winding down must survive its predecessor's exit.
+//
+// No deadlock with CloseGrpcServer, which holds mu while calling Stop: Stop
+// waits only for Serve's own deferred bookkeeping, which completes before Serve
+// returns to us, so we simply queue on mu behind it.
+func serveAndReap(srv *grpc.Server, lis net.Listener, mode SetupMode) {
+	defer config.DeferPanicToError("grpcsetup", func(err error) {
+		Log(LogLevel_FATAL, LogType_CORE, err.Error())
+		<-time.After(5 * time.Second)
+	})
+	serveErr := srv.Serve(lis)
+	// ErrServerStopped means Stop got there before Serve started, which is a
+	// deliberate stop like any other, not a lost listener.
+	if errors.Is(serveErr, grpc.ErrServerStopped) {
+		serveErr = nil
+	}
+	if serveErr != nil {
+		Log(LogLevel_DEBUG, LogType_CORE, fmt.Sprintf("failed to serve: %v\n", serveErr))
+		fmt.Fprintf(os.Stderr, "rayn: grpc server mode %d stopped serving: %v\n", mode, serveErr)
+	}
+	Log(LogLevel_DEBUG, LogType_CORE, "Server stopped")
+
+	mu.Lock()
+	if grpcServer[mode] == srv {
+		delete(grpcServer, mode)
+	}
+	mu.Unlock()
+
+	// Serve returning on its own (not via Stop) leaves the connections it had
+	// accepted still being served. Nothing can reach this server any more, so
+	// release them.
+	if serveErr != nil {
+		srv.Stop()
+	}
+}
+
+// listenerProbeTimeout bounds the self-dial in keepOrReviveLocked. A refusal on
+// loopback is immediate on Darwin and Linux; Windows takes about a second to
+// report one, and treating that as "not accepting" is the right answer there.
+var listenerProbeTimeout = 500 * time.Millisecond
+
+// retireTimeout bounds how long keepOrReviveLocked waits for a dead server to
+// stop. See retireServer.
+var retireTimeout = time.Second
+
+// keepOrReviveLocked decides what Setup does when a server for the mode is
+// already registered: keep it if it is still accepting connections, or replace
+// it if it is not. The caller holds mu.
+//
+// This used to return "already started" unconditionally, which is right only
+// while the listener is alive. On iOS it may not be: the system can reclaim the
+// resources under a suspended app's sockets (Apple TN2277), after which every
+// connection to the foreground core is refused. The entry survived, so every
+// later Setup, including the app's own retry, handed back the dead server, and
+// a profile import kept failing with "cannot reach the local core" until the
+// app was force-quit.
+//
+// Only the gRPC server is restarted. libbox, the logger and the services are
+// in-memory state the socket loss did not touch, and on Android a full Setup
+// would also overwrite the static state shared with the running background core.
+// The per-install secret is unchanged, so grpcSecrets is not written either.
+// A secure mode mints a fresh certificate, which the client re-fetches over the
+// method channel after every setup.
+func keepOrReviveLocked(srv *grpc.Server, listen string, mode SetupMode) error {
+	if listen == "" {
+		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already started")
+		return nil
+	}
+	probeErr := probeListener(listen)
+	if probeErr == nil {
+		Log(LogLevel_WARNING, LogType_CORE, "grpcServer already started")
+		return nil
+	}
+	// Stderr as well as the log: the log reaches the app over the very channel
+	// that is broken (see the certificate fingerprint note above).
+	fmt.Fprintf(os.Stderr, "rayn: grpc server mode %d on %s is not accepting (%v); replacing it\n", mode, listen, probeErr)
+	Log(LogLevel_WARNING, LogType_CORE, fmt.Sprintf("grpc server mode %d on %s is not accepting (%v); replacing it", mode, listen, probeErr))
+
+	delete(grpcServer, mode)
+	retireServer(srv)
+	_, err := StartGrpcServerByMode(listen, mode)
+	return err
+}
+
+// probeListener reports whether something accepts TCP connections on listen.
+func probeListener(listen string) error {
+	conn, err := net.DialTimeout("tcp", listen, listenerProbeTimeout)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
+}
+
+// retireServer stops a server that is no longer reachable, waiting at most
+// retireTimeout.
+//
+// It must not wait indefinitely, because it runs under mu. On a socket the
+// system has reclaimed, Go's accept can keep retrying ECONNABORTED without
+// returning (internal/poll treats it as transient), and closing the listener
+// waits for that in-flight accept. An unbounded Stop would then hold mu forever
+// and wedge every later Setup, GetGrpcServerPublicKey and Close.
+func retireServer(srv *grpc.Server) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.Stop()
+	}()
+	select {
+	case <-done:
+	case <-time.After(retireTimeout):
+		fmt.Fprintf(os.Stderr, "rayn: retired grpc server did not stop within %v; leaving it to finish in the background\n", retireTimeout)
+	}
 }
 
 // GetGrpcServerPublicKey returns the gRPC server's public key.
